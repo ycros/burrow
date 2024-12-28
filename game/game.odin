@@ -29,15 +29,18 @@ Obstacle :: struct {
 }
 
 Game_Memory :: struct {
-	player_pos:               rl.Vector2,
-	player_speed:             f32,
-	player_velocity:          f32,
-	player_jumping:           bool,
-	above_background_texture: rl.Texture2D,
-	background_positions:     [AboveBackgroundSprites]rl.Vector2,
-	obstacles:                [16]Obstacle,
-	previous_player_y:        [16]f32,
-	previous_player_y_head:   int,
+	player_pos:                      rl.Vector2,
+	player_speed:                    f32,
+	player_velocity:                 f32,
+	player_jumping:                  bool,
+	above_background_texture:        rl.Texture2D,
+	background_positions:            [AboveBackgroundSprites]rl.Vector2,
+	obstacles:                       [16]Obstacle,
+	previous_player_y:               [16]f32,
+	previous_player_y_head:          int,
+	previous_player_y_snapshot_time: f64,
+	player_shader:                   rl.Shader,
+	player_texture:                  rl.Texture2D,
 }
 g_mem: ^Game_Memory
 
@@ -97,9 +100,12 @@ update :: proc() {
 		}
 	}
 
-	g_mem.previous_player_y_head =
-		(g_mem.previous_player_y_head + 1) % len(g_mem.previous_player_y)
-	g_mem.previous_player_y[g_mem.previous_player_y_head] = g_mem.player_pos.y
+	if rl.GetTime() - g_mem.previous_player_y_snapshot_time > 0.03 {
+		g_mem.previous_player_y_snapshot_time = rl.GetTime()
+		g_mem.previous_player_y_head =
+			(g_mem.previous_player_y_head + 1) % len(g_mem.previous_player_y)
+		g_mem.previous_player_y[g_mem.previous_player_y_head] = g_mem.player_pos.y
+	}
 
 	// input = linalg.normalize0(input)
 	// g_mem.player_pos += input * rl.GetFrameTime() * 100
@@ -139,6 +145,47 @@ draw_backgrounds :: proc() {
 	}
 }
 
+draw_player_segment :: proc(pos: rl.Vector2) {
+	size :: 40
+	rl.DrawTexturePro(
+		g_mem.player_texture,
+		{0, 0, 100, 100},
+		{pos.x, pos.y, size, size},
+		{size / 2, size / 2},
+		0,
+		rl.WHITE,
+	)
+}
+
+draw_player :: proc() {
+	rl.SetShaderValueTexture(
+		g_mem.player_shader,
+		rl.GetShaderLocation(g_mem.player_shader, "currentTexture"),
+		g_mem.player_texture,
+	)
+
+	// rl.BeginShaderMode(g_mem.player_shader)
+	{
+		// previous positions are stored ring buffer style
+		last_pos_count := len(g_mem.previous_player_y)
+		for i in g_mem.previous_player_y_head ..< len(g_mem.previous_player_y) {
+			draw_player_segment(
+				{g_mem.player_pos.x - f32(10 * last_pos_count), g_mem.previous_player_y[i]},
+			)
+			last_pos_count -= 1
+		}
+		for i in 0 ..< g_mem.previous_player_y_head {
+			draw_player_segment(
+				{g_mem.player_pos.x - f32(10 * last_pos_count), g_mem.previous_player_y[i]},
+			)
+			last_pos_count -= 1
+		}
+
+		draw_player_segment(g_mem.player_pos)
+	}
+	// rl.EndShaderMode()
+}
+
 draw :: proc() {
 	rl.BeginDrawing()
 	{
@@ -154,28 +201,7 @@ draw :: proc() {
 			// rl.DrawRectangleV({20, 20}, {10, 10}, rl.RED)
 			// rl.DrawRectangleV({-30, -20}, {10, 10}, rl.GREEN)
 
-			// iterate over player's previous positions, the head is the most recent position, as it's a ring buffer
-			last_pos_count := len(g_mem.previous_player_y)
-			for i in g_mem.previous_player_y_head ..< len(g_mem.previous_player_y) {
-				// draw offset -10 by last_pos_count
-				rl.DrawRectangleV(
-					{g_mem.player_pos.x - f32(10 * last_pos_count), g_mem.previous_player_y[i]},
-					{10, 10},
-					rl.WHITE,
-				)
-				last_pos_count -= 1
-			}
-			for i in 0 ..< g_mem.previous_player_y_head {
-				// draw offset -10 by last_pos_count
-				rl.DrawRectangleV(
-					{g_mem.player_pos.x - f32(10 * last_pos_count), g_mem.previous_player_y[i]},
-					{10, 10},
-					rl.WHITE,
-				)
-				last_pos_count -= 1
-			}
-
-			rl.DrawRectangleV(g_mem.player_pos, {10, 10}, rl.WHITE)
+			draw_player()
 		}
 		rl.EndMode2D()
 
@@ -216,9 +242,13 @@ game_init :: proc() {
 	g_mem = new(Game_Memory)
 
 	g_mem^ = Game_Memory {
-		player_speed             = 1.0,
-		above_background_texture = rl.LoadTexture("assets/above-background-sky.png"),
+		player_speed                    = 1.0,
+		above_background_texture        = rl.LoadTexture("assets/above-background-sky.png"),
+		previous_player_y_snapshot_time = rl.GetTime(),
+		player_shader                   = rl.LoadShader(nil, "assets/player.fs"),
+		player_texture                  = rl.LoadTexture("assets/radial_gradient.png"),
 	}
+
 
 	game_hot_reloaded(g_mem)
 }
