@@ -21,8 +21,9 @@ import "core:fmt"
 import rl "vendor:raylib"
 
 PIXEL_WINDOW_HEIGHT :: 320
-PLAYER_RENDER_TEXTURE_SIZE :: 320 // Adjust these sizes based on your needs
-
+PLAYER_RENDER_TEXTURE_SIZE :: 2048 // Adjust these sizes based on your needs
+PLAYER_SEGMENT_SIZE :: 100
+PLAYER_RENDER_SCALE :: 0.2
 
 Obstacle :: struct {
 	is_active: bool,
@@ -35,10 +36,11 @@ Game_Memory :: struct {
 	player_speed:                    f32,
 	player_velocity:                 f32,
 	player_jumping:                  bool,
+	player_burrowing:                bool,
 	above_background_texture:        rl.Texture2D,
 	background_positions:            [AboveBackgroundSprites]rl.Vector2,
 	obstacles:                       [16]Obstacle,
-	previous_player_y:               [16]f32,
+	previous_player_y:               [128]f32,
 	previous_player_y_head:          int,
 	previous_player_y_snapshot_time: f64,
 	player_shader:                   rl.Shader,
@@ -77,17 +79,36 @@ ui_camera :: proc() -> rl.Camera2D {
 	return {zoom = f32(rl.GetScreenHeight()) / PIXEL_WINDOW_HEIGHT}
 }
 
+input_is_down :: proc() -> bool {
+	return rl.IsKeyDown(.J) || rl.IsGamepadButtonDown(0, .RIGHT_FACE_RIGHT)
+}
+
+input_is_up :: proc() -> bool {
+	return rl.IsKeyDown(.K) || rl.IsGamepadButtonDown(0, .RIGHT_FACE_DOWN)
+}
+
 update :: proc() {
 	GRAVITY :: 0.2
+	BURROW_GRAVITY :: 0.1
 	FALL_MULTIPLIER :: 0.5
 	JUMP_VELOCITY :: -5
+	BURROW_VELOCITY :: 3
 
 	dt := rl.GetFrameTime() * 100
 
-	if rl.IsKeyDown(.SPACE) && !g_mem.player_jumping {
-		if g_mem.player_pos.y == 0 {
-			g_mem.player_jumping = true
-			g_mem.player_velocity = JUMP_VELOCITY
+	if !g_mem.player_jumping {
+		if input_is_down() {
+			if g_mem.player_pos.y == 0 {
+				g_mem.player_jumping = true
+				g_mem.player_velocity = JUMP_VELOCITY
+			}
+		}
+
+		if input_is_up() {
+			if g_mem.player_pos.y == 0 {
+				g_mem.player_burrowing = true
+				g_mem.player_velocity = BURROW_VELOCITY
+			}
 		}
 	}
 
@@ -104,7 +125,16 @@ update :: proc() {
 		}
 	}
 
-	if rl.GetTime() - g_mem.previous_player_y_snapshot_time > 0.03 {
+	if g_mem.player_burrowing {
+		g_mem.player_pos.y += g_mem.player_velocity * dt
+		g_mem.player_velocity -= BURROW_GRAVITY * dt
+		if g_mem.player_pos.y <= 0 {
+			g_mem.player_pos.y = 0
+			g_mem.player_burrowing = false
+		}
+	}
+
+	if rl.GetTime() - g_mem.previous_player_y_snapshot_time > f64(0.003 * g_mem.player_speed) {
 		g_mem.previous_player_y_snapshot_time = rl.GetTime()
 		g_mem.previous_player_y_head =
 			(g_mem.previous_player_y_head + 1) % len(g_mem.previous_player_y)
@@ -149,92 +179,131 @@ draw_backgrounds :: proc() {
 	}
 }
 
-draw_player_segment :: proc(pos: rl.Vector2) {
-	size :: 40
-	rl.DrawTexturePro(
-		g_mem.player_texture,
-		{0, 0, 100, 100},
-		{pos.x, pos.y, size, size},
-		{size / 2, size / 2},
-		0,
-		rl.WHITE,
-	)
+
+render_player :: proc() {
+	draw_player_segment :: proc(pos: rl.Vector2) {
+		rl.DrawTexturePro(
+			g_mem.player_texture,
+			{0, 0, 100, 100},
+			{pos.x, pos.y, PLAYER_SEGMENT_SIZE, PLAYER_SEGMENT_SIZE},
+			{PLAYER_SEGMENT_SIZE / 2, PLAYER_SEGMENT_SIZE / 2},
+			0,
+			rl.WHITE,
+		)
+		// debug rect
+		// rl.DrawRectangleLinesEx(
+		// 	{
+		// 		pos.x - (PLAYER_SEGMENT_SIZE / 2),
+		// 		pos.y - (PLAYER_SEGMENT_SIZE / 2),
+		// 		PLAYER_SEGMENT_SIZE,
+		// 		PLAYER_SEGMENT_SIZE,
+		// 	},
+		// 	1,
+		// 	rl.RED,
+		// )
+	}
+
+	get_x_pos :: proc(count: int) -> f32 {
+		return -f32(count * 10) - PLAYER_SEGMENT_SIZE / 2
+	}
+
+	scale_y_pos :: proc(orig_y_pos: f32) -> f32 {
+		return orig_y_pos / PLAYER_RENDER_SCALE
+	}
+
+	// // Begin drawing to render texture
+	rl.BeginTextureMode(g_mem.player_render_texture)
+	{
+		rl.ClearBackground(rl.BLANK)
+
+		// debug rectangle
+		rl.DrawRectangleLines(
+			1,
+			1,
+			PLAYER_RENDER_TEXTURE_SIZE - 1,
+			PLAYER_RENDER_TEXTURE_SIZE - 2,
+			rl.RED,
+		)
+
+		camera := rl.Camera2D {
+			offset = {
+				f32(g_mem.player_render_texture.texture.width),
+				f32(g_mem.player_render_texture.texture.height) / 2,
+			},
+			zoom   = 1.0,
+		}
+
+		rl.BeginMode2D(camera)
+		{
+			pos_count := 0
+
+			draw_player_segment({get_x_pos(pos_count), scale_y_pos(g_mem.player_pos.y)})
+			pos_count += 1
+
+			for i := g_mem.previous_player_y_head; i >= 0; i -= 1 {
+				draw_player_segment(
+					{get_x_pos(pos_count), scale_y_pos(g_mem.previous_player_y[i])},
+				)
+				pos_count += 1
+			}
+
+			for i := len(g_mem.previous_player_y) - 1; i > g_mem.previous_player_y_head; i -= 1 {
+				draw_player_segment(
+					{get_x_pos(pos_count), scale_y_pos(g_mem.previous_player_y[i])},
+				)
+				pos_count += 1
+			}
+		}
+		rl.EndMode2D()
+	}
+	rl.EndTextureMode()
 }
 
 draw_player :: proc() {
-	// // Begin drawing to render texture
-	// rl.BeginTextureMode(g_mem.player_render_texture)
-	// {
-	// 	rl.ClearBackground(rl.BLANK)
+	// Set the shader texture uniform to use our render texture
+	rl.SetShaderValueTexture(
+		g_mem.player_shader,
+		rl.GetShaderLocation(g_mem.player_shader, "currentTexture"),
+		g_mem.player_render_texture.texture,
+	)
 
-	// 	// debug rectangle
-	// 	rl.DrawRectangleLines(
-	// 		1,
-	// 		1,
-	// 		PLAYER_RENDER_TEXTURE_SIZE - 1,
-	// 		PLAYER_RENDER_TEXTURE_SIZE - 2,
-	// 		rl.RED,
-	// 	)
+	// Now draw the combined texture with shader
+	rl.BeginShaderMode(g_mem.player_shader)
+	{
+		dest_rect: rl.Rectangle = {
+			0,
+			0,
+			PLAYER_RENDER_TEXTURE_SIZE * PLAYER_RENDER_SCALE,
+			PLAYER_RENDER_TEXTURE_SIZE * PLAYER_RENDER_SCALE,
+		}
+		seg_scaled := f32(PLAYER_SEGMENT_SIZE * PLAYER_RENDER_SCALE)
+		origin: rl.Vector2 = {
+			dest_rect.width - (seg_scaled - (seg_scaled / 4)),
+			dest_rect.height / 2,
+		}
+		src_rect: rl.Rectangle = {
+			0,
+			0,
+			f32(g_mem.player_render_texture.texture.width),
+			-f32(g_mem.player_render_texture.texture.height),
+		}
+		rl.DrawTexturePro(
+			g_mem.player_render_texture.texture,
+			src_rect,
+			dest_rect,
+			origin,
+			0,
+			rl.WHITE,
+		)
+	}
+	rl.EndShaderMode()
 
-	// 	camera := rl.Camera2D {
-	// 		offset = {
-	// 			f32(g_mem.player_render_texture.texture.width) - 40,
-	// 			f32(g_mem.player_render_texture.texture.height) / 2,
-	// 		},
-	// 		zoom   = 1.0,
-	// 	}
-
-	// 	rl.BeginMode2D(camera)
-	// 	{
-	// 		// Draw previous positions
-	// 		last_pos_count := len(g_mem.previous_player_y)
-	// 		for i in g_mem.previous_player_y_head ..< len(g_mem.previous_player_y) {
-	// 			draw_player_segment({-f32(10 * last_pos_count), g_mem.previous_player_y[i]})
-	// 			last_pos_count -= 1
-	// 		}
-	// 		for i in 0 ..< g_mem.previous_player_y_head {
-	// 			draw_player_segment({-f32(10 * last_pos_count), g_mem.previous_player_y[i]})
-	// 			last_pos_count -= 1
-	// 		}
-
-	// 		// Draw current position
-	// 		draw_player_segment({0, g_mem.player_pos.y})
-	// 	}
-	// 	rl.EndMode2D()
-	// }
-	// rl.EndTextureMode()
-
-
-	// // Set the shader texture uniform to use our render texture
-	// rl.SetShaderValueTexture(
-	// 	g_mem.player_shader,
-	// 	rl.GetShaderLocation(g_mem.player_shader, "currentTexture"),
-	// 	g_mem.player_render_texture.texture,
-	// )
-
-	// // Now draw the combined texture with shader
-	// // rl.BeginShaderMode(g_mem.player_shader)
-	// {
-	// 	source_rect := rl.Rectangle {
-	// 		0,
-	// 		0,
-	// 		f32(g_mem.player_render_texture.texture.width),
-	// 		-f32(g_mem.player_render_texture.texture.height), // Flip Y
-	// 	}
-	// 	rl.DrawTextureRec(
-	// 		g_mem.player_render_texture.texture,
-	// 		source_rect,
-	// 		{g_mem.player_pos.x, 0},
-	// 		rl.WHITE,
-	// 	)
-	// }
-	// // rl.EndShaderMode()
-
-	// draw_player_segment(g_mem.player_pos)
 	rl.DrawRectangleV(g_mem.player_pos, {10, 10}, rl.PURPLE)
 }
 
 draw :: proc() {
+	render_player()
+
 	rl.BeginDrawing()
 	{
 		rl.ClearBackground(rl.BLACK)

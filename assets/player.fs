@@ -13,8 +13,8 @@ void main()
     float intensity = texColor.r;
 
     // Define thresholds
-    float mainThreshold = 0.5;    // Adjust this for main shape size
-    float borderThreshold = 0.3;  // Adjust this for border size
+    float mainThreshold = 0.05;    // Adjust this for main shape size
+    float borderThreshold = 0.01;  // Adjust this for border size
 
     // Set colors based on thresholds
     if (intensity > mainThreshold) {
