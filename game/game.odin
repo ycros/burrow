@@ -21,6 +21,8 @@ import "core:fmt"
 import rl "vendor:raylib"
 
 PIXEL_WINDOW_HEIGHT :: 320
+PLAYER_RENDER_TEXTURE_SIZE :: 320 // Adjust these sizes based on your needs
+
 
 Obstacle :: struct {
 	is_active: bool,
@@ -41,6 +43,7 @@ Game_Memory :: struct {
 	previous_player_y_snapshot_time: f64,
 	player_shader:                   rl.Shader,
 	player_texture:                  rl.Texture2D,
+	player_render_texture:           rl.RenderTexture2D,
 }
 g_mem: ^Game_Memory
 
@@ -63,8 +66,9 @@ game_camera :: proc() -> rl.Camera2D {
 	h := f32(rl.GetScreenHeight())
 
 	return {
-		zoom = h / PIXEL_WINDOW_HEIGHT,
-		target = g_mem.player_pos + {180, 0},
+		zoom   = h / PIXEL_WINDOW_HEIGHT,
+		target = g_mem.player_pos,
+		// target = g_mem.player_pos + {180, 0},
 		offset = {w / 2, h / 2},
 	}
 }
@@ -158,32 +162,76 @@ draw_player_segment :: proc(pos: rl.Vector2) {
 }
 
 draw_player :: proc() {
-	rl.SetShaderValueTexture(
-		g_mem.player_shader,
-		rl.GetShaderLocation(g_mem.player_shader, "currentTexture"),
-		g_mem.player_texture,
-	)
+	// // Begin drawing to render texture
+	// rl.BeginTextureMode(g_mem.player_render_texture)
+	// {
+	// 	rl.ClearBackground(rl.BLANK)
 
-	// rl.BeginShaderMode(g_mem.player_shader)
-	{
-		// previous positions are stored ring buffer style
-		last_pos_count := len(g_mem.previous_player_y)
-		for i in g_mem.previous_player_y_head ..< len(g_mem.previous_player_y) {
-			draw_player_segment(
-				{g_mem.player_pos.x - f32(10 * last_pos_count), g_mem.previous_player_y[i]},
-			)
-			last_pos_count -= 1
-		}
-		for i in 0 ..< g_mem.previous_player_y_head {
-			draw_player_segment(
-				{g_mem.player_pos.x - f32(10 * last_pos_count), g_mem.previous_player_y[i]},
-			)
-			last_pos_count -= 1
-		}
+	// 	// debug rectangle
+	// 	rl.DrawRectangleLines(
+	// 		1,
+	// 		1,
+	// 		PLAYER_RENDER_TEXTURE_SIZE - 1,
+	// 		PLAYER_RENDER_TEXTURE_SIZE - 2,
+	// 		rl.RED,
+	// 	)
 
-		draw_player_segment(g_mem.player_pos)
-	}
-	// rl.EndShaderMode()
+	// 	camera := rl.Camera2D {
+	// 		offset = {
+	// 			f32(g_mem.player_render_texture.texture.width) - 40,
+	// 			f32(g_mem.player_render_texture.texture.height) / 2,
+	// 		},
+	// 		zoom   = 1.0,
+	// 	}
+
+	// 	rl.BeginMode2D(camera)
+	// 	{
+	// 		// Draw previous positions
+	// 		last_pos_count := len(g_mem.previous_player_y)
+	// 		for i in g_mem.previous_player_y_head ..< len(g_mem.previous_player_y) {
+	// 			draw_player_segment({-f32(10 * last_pos_count), g_mem.previous_player_y[i]})
+	// 			last_pos_count -= 1
+	// 		}
+	// 		for i in 0 ..< g_mem.previous_player_y_head {
+	// 			draw_player_segment({-f32(10 * last_pos_count), g_mem.previous_player_y[i]})
+	// 			last_pos_count -= 1
+	// 		}
+
+	// 		// Draw current position
+	// 		draw_player_segment({0, g_mem.player_pos.y})
+	// 	}
+	// 	rl.EndMode2D()
+	// }
+	// rl.EndTextureMode()
+
+
+	// // Set the shader texture uniform to use our render texture
+	// rl.SetShaderValueTexture(
+	// 	g_mem.player_shader,
+	// 	rl.GetShaderLocation(g_mem.player_shader, "currentTexture"),
+	// 	g_mem.player_render_texture.texture,
+	// )
+
+	// // Now draw the combined texture with shader
+	// // rl.BeginShaderMode(g_mem.player_shader)
+	// {
+	// 	source_rect := rl.Rectangle {
+	// 		0,
+	// 		0,
+	// 		f32(g_mem.player_render_texture.texture.width),
+	// 		-f32(g_mem.player_render_texture.texture.height), // Flip Y
+	// 	}
+	// 	rl.DrawTextureRec(
+	// 		g_mem.player_render_texture.texture,
+	// 		source_rect,
+	// 		{g_mem.player_pos.x, 0},
+	// 		rl.WHITE,
+	// 	)
+	// }
+	// // rl.EndShaderMode()
+
+	// draw_player_segment(g_mem.player_pos)
+	rl.DrawRectangleV(g_mem.player_pos, {10, 10}, rl.PURPLE)
 }
 
 draw :: proc() {
@@ -247,14 +295,21 @@ game_init :: proc() {
 		previous_player_y_snapshot_time = rl.GetTime(),
 		player_shader                   = rl.LoadShader(nil, "assets/player.fs"),
 		player_texture                  = rl.LoadTexture("assets/radial_gradient.png"),
+		player_render_texture           = rl.LoadRenderTexture(
+			PLAYER_RENDER_TEXTURE_SIZE,
+			PLAYER_RENDER_TEXTURE_SIZE,
+		),
 	}
-
 
 	game_hot_reloaded(g_mem)
 }
 
 @(export)
 game_shutdown :: proc() {
+	rl.UnloadRenderTexture(g_mem.player_render_texture)
+	rl.UnloadTexture(g_mem.above_background_texture)
+	rl.UnloadTexture(g_mem.player_texture)
+	rl.UnloadShader(g_mem.player_shader)
 	free(g_mem)
 }
 
