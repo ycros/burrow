@@ -46,6 +46,8 @@ Game_Memory :: struct {
 	player_shader:                   rl.Shader,
 	player_texture:                  rl.Texture2D,
 	player_render_texture:           rl.RenderTexture2D,
+	release_decay_applied:           bool,
+	chain_multiplier:                f32,
 }
 g_mem: ^Game_Memory
 
@@ -79,12 +81,12 @@ ui_camera :: proc() -> rl.Camera2D {
 	return {zoom = f32(rl.GetScreenHeight()) / PIXEL_WINDOW_HEIGHT}
 }
 
-input_is_down :: proc() -> bool {
-	return rl.IsKeyDown(.J) || rl.IsGamepadButtonDown(0, .RIGHT_FACE_RIGHT)
+input_is_jumping :: proc() -> bool {
+	return rl.IsKeyDown(.K) || rl.IsGamepadButtonDown(0, .RIGHT_FACE_RIGHT)
 }
 
-input_is_up :: proc() -> bool {
-	return rl.IsKeyDown(.K) || rl.IsGamepadButtonDown(0, .RIGHT_FACE_DOWN)
+input_is_burrowing :: proc() -> bool {
+	return rl.IsKeyDown(.J) || rl.IsGamepadButtonDown(0, .RIGHT_FACE_DOWN)
 }
 
 update :: proc() {
@@ -93,18 +95,22 @@ update :: proc() {
 	FALL_MULTIPLIER :: 0.5
 	JUMP_VELOCITY :: -5
 	BURROW_VELOCITY :: 3
+	RELEASE_DECAY :: 0.6
+	ACCELERATION :: 1.1
+	CHAIN_MULTIPLIER_INCREMENT :: 0.05
+	CHAIN_MULTIPLIER_MAX :: 1.5
 
 	dt := rl.GetFrameTime() * 100
 
-	if !g_mem.player_jumping {
-		if input_is_down() {
+	if !g_mem.player_jumping && !g_mem.player_burrowing {
+		if input_is_jumping() {
 			if g_mem.player_pos.y == 0 {
 				g_mem.player_jumping = true
 				g_mem.player_velocity = JUMP_VELOCITY
 			}
 		}
 
-		if input_is_up() {
+		if input_is_burrowing() {
 			if g_mem.player_pos.y == 0 {
 				g_mem.player_burrowing = true
 				g_mem.player_velocity = BURROW_VELOCITY
@@ -113,6 +119,14 @@ update :: proc() {
 	}
 
 	if g_mem.player_jumping {
+		if !input_is_jumping() && !g_mem.release_decay_applied && g_mem.player_velocity < 0 {
+			g_mem.player_velocity *= RELEASE_DECAY
+			g_mem.release_decay_applied = true
+		}
+		if g_mem.player_velocity > 0 && input_is_burrowing() {
+			g_mem.player_velocity += ACCELERATION * dt
+		}
+
 		g_mem.player_pos.y += g_mem.player_velocity * dt
 		if g_mem.player_velocity > 0 {
 			g_mem.player_velocity += GRAVITY * FALL_MULTIPLIER * dt
@@ -120,18 +134,50 @@ update :: proc() {
 			g_mem.player_velocity += GRAVITY * dt
 		}
 		if g_mem.player_pos.y >= 0 {
-			g_mem.player_pos.y = 0
 			g_mem.player_jumping = false
+			if input_is_burrowing() {
+				g_mem.chain_multiplier = min(
+					g_mem.chain_multiplier + CHAIN_MULTIPLIER_INCREMENT,
+					CHAIN_MULTIPLIER_MAX,
+				)
+				g_mem.player_burrowing = true
+				g_mem.player_velocity = BURROW_VELOCITY * g_mem.chain_multiplier
+			} else {
+				g_mem.player_pos.y = 0
+				g_mem.chain_multiplier = 1.0
+			}
 		}
 	}
 
 	if g_mem.player_burrowing {
+		if !input_is_burrowing() && !g_mem.release_decay_applied && g_mem.player_velocity > 0 {
+			g_mem.player_velocity *= RELEASE_DECAY
+			g_mem.release_decay_applied = true
+		}
+		if g_mem.player_velocity < 0 && input_is_jumping() {
+			g_mem.player_velocity -= ACCELERATION * dt
+		}
+
 		g_mem.player_pos.y += g_mem.player_velocity * dt
 		g_mem.player_velocity -= BURROW_GRAVITY * dt
 		if g_mem.player_pos.y <= 0 {
-			g_mem.player_pos.y = 0
 			g_mem.player_burrowing = false
+			if input_is_jumping() {
+				g_mem.chain_multiplier = min(
+					g_mem.chain_multiplier + CHAIN_MULTIPLIER_INCREMENT,
+					CHAIN_MULTIPLIER_MAX,
+				)
+				g_mem.player_jumping = true
+				g_mem.player_velocity = JUMP_VELOCITY * g_mem.chain_multiplier
+			} else {
+				g_mem.player_pos.y = 0
+				g_mem.chain_multiplier = 1.0
+			}
 		}
+	}
+
+	if g_mem.player_pos.y == 0 {
+		g_mem.release_decay_applied = false
 	}
 
 	if rl.GetTime() - g_mem.previous_player_y_snapshot_time > f64(0.003 * g_mem.player_speed) {
@@ -178,7 +224,6 @@ draw_backgrounds :: proc() {
 		}
 	}
 }
-
 
 render_player :: proc() {
 	draw_player_segment :: proc(pos: rl.Vector2) {
@@ -326,13 +371,13 @@ draw :: proc() {
 		{
 			// Note: main_hot_reload.odin clears the temp allocator at end of frame.
 			stats := fmt.ctprintf(
-				"player_speed: %v\nplayer_pos: %v\nplayer_bg_pos: %v",
+				"player_speed: %v\nplayer_pos: %v\nplayer_velocity: %v\nchain_multiplier: %v",
 				g_mem.player_speed,
 				g_mem.player_pos,
-				g_mem.background_positions[.DistantMountains],
+				g_mem.player_velocity,
+				g_mem.chain_multiplier,
 			)
 			rl.DrawText(stats, 5, 5, 8, rl.WHITE)
-
 		}
 		rl.EndMode2D()
 	}
@@ -368,6 +413,7 @@ game_init :: proc() {
 			PLAYER_RENDER_TEXTURE_SIZE,
 			PLAYER_RENDER_TEXTURE_SIZE,
 		),
+		chain_multiplier                = 1.0,
 	}
 
 	game_hot_reloaded(g_mem)
