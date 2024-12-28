@@ -15,23 +15,55 @@
 package game
 
 import "core:fmt"
-import "core:math/linalg"
+// import "core:math"
+// import "core:math/linalg"
+// import "core:os"
 import rl "vendor:raylib"
 
-PIXEL_WINDOW_HEIGHT :: 180
+PIXEL_WINDOW_HEIGHT :: 320
 
-Game_Memory :: struct {
-	player_pos:  rl.Vector2,
-	some_number: int,
+Obstacle :: struct {
+	is_active: bool,
+	pos:       rl.Vector2,
+	size:      rl.Vector2,
 }
 
+Game_Memory :: struct {
+	player_pos:               rl.Vector2,
+	player_speed:             f32,
+	player_velocity:          f32,
+	player_jumping:           bool,
+	above_background_texture: rl.Texture2D,
+	background_positions:     [AboveBackgroundSprites]rl.Vector2,
+	obstacles:                [16]Obstacle,
+	previous_player_y:        [16]f32,
+	previous_player_y_head:   int,
+}
 g_mem: ^Game_Memory
+
+AboveBackgroundSprites :: enum {
+	Sky,
+	DistantMountains,
+	CloserMountains,
+	Hills,
+}
+
+ABOVE_BACKGROUND_SPRITE_RECTS :: [AboveBackgroundSprites]rl.Rectangle {
+	.Sky              = {1, 1, 320, 320},
+	.DistantMountains = {323, 1, 320, 320},
+	.CloserMountains  = {1, 323, 320, 320},
+	.Hills            = {323, 323, 320, 320},
+}
 
 game_camera :: proc() -> rl.Camera2D {
 	w := f32(rl.GetScreenWidth())
 	h := f32(rl.GetScreenHeight())
 
-	return {zoom = h / PIXEL_WINDOW_HEIGHT, target = g_mem.player_pos, offset = {w / 2, h / 2}}
+	return {
+		zoom = h / PIXEL_WINDOW_HEIGHT,
+		target = g_mem.player_pos + {180, 0},
+		offset = {w / 2, h / 2},
+	}
 }
 
 ui_camera :: proc() -> rl.Camera2D {
@@ -39,24 +71,72 @@ ui_camera :: proc() -> rl.Camera2D {
 }
 
 update :: proc() {
-	input: rl.Vector2
+	GRAVITY :: 0.2
+	FALL_MULTIPLIER :: 0.5
+	JUMP_VELOCITY :: -5
 
-	if rl.IsKeyDown(.UP) || rl.IsKeyDown(.W) {
-		input.y -= 1
-	}
-	if rl.IsKeyDown(.DOWN) || rl.IsKeyDown(.S) {
-		input.y += 1
-	}
-	if rl.IsKeyDown(.LEFT) || rl.IsKeyDown(.A) {
-		input.x -= 1
-	}
-	if rl.IsKeyDown(.RIGHT) || rl.IsKeyDown(.D) {
-		input.x += 1
+	dt := rl.GetFrameTime() * 100
+
+	if rl.IsKeyDown(.SPACE) && !g_mem.player_jumping {
+		if g_mem.player_pos.y == 0 {
+			g_mem.player_jumping = true
+			g_mem.player_velocity = JUMP_VELOCITY
+		}
 	}
 
-	input = linalg.normalize0(input)
-	g_mem.player_pos += input * rl.GetFrameTime() * 100
-	g_mem.some_number += 1
+	if g_mem.player_jumping {
+		g_mem.player_pos.y += g_mem.player_velocity * dt
+		if g_mem.player_velocity > 0 {
+			g_mem.player_velocity += GRAVITY * FALL_MULTIPLIER * dt
+		} else {
+			g_mem.player_velocity += GRAVITY * dt
+		}
+		if g_mem.player_pos.y >= 0 {
+			g_mem.player_pos.y = 0
+			g_mem.player_jumping = false
+		}
+	}
+
+	g_mem.previous_player_y_head =
+		(g_mem.previous_player_y_head + 1) % len(g_mem.previous_player_y)
+	g_mem.previous_player_y[g_mem.previous_player_y_head] = g_mem.player_pos.y
+
+	// input = linalg.normalize0(input)
+	// g_mem.player_pos += input * rl.GetFrameTime() * 100
+
+	// g_mem.player_pos.y = f32(math.sin(rl.GetTime() * 1) * 75) - 75
+
+	for &pos, bg in g_mem.background_positions {
+		switch bg {
+		case .Sky:
+		// pos.x -= 0.02
+		case .DistantMountains:
+			pos.x -= 0.07 * g_mem.player_speed * dt
+			pos.y = -(g_mem.player_pos.y / 60)
+		case .CloserMountains:
+			pos.x -= 0.1 * g_mem.player_speed * dt
+			pos.y = -(g_mem.player_pos.y / 30)
+		case .Hills:
+			pos.x -= 0.3 * g_mem.player_speed * dt
+			pos.y = -(g_mem.player_pos.y / 10)
+		}
+		if pos.x < -320 {
+			pos.x += 320
+		}
+	}
+}
+
+draw_backgrounds :: proc() {
+	for rect, bg in ABOVE_BACKGROUND_SPRITE_RECTS {
+		for i in -1 ..= 2 {
+			rl.DrawTextureRec(
+				g_mem.above_background_texture,
+				rect,
+				g_mem.background_positions[bg] + {rect.width * f32(i), -310},
+				rl.WHITE,
+			)
+		}
+	}
 }
 
 draw :: proc() {
@@ -66,26 +146,49 @@ draw :: proc() {
 
 		rl.BeginMode2D(game_camera())
 		{
-			rl.DrawRectangleV(g_mem.player_pos, {10, 20}, rl.WHITE)
-			rl.DrawRectangleV({20, 20}, {10, 10}, rl.RED)
-			rl.DrawRectangleV({-30, -20}, {10, 10}, rl.GREEN)
+			draw_backgrounds()
+
+			rl.DrawLineEx({-150, 12.5}, {150, 12.5}, 5, rl.BROWN)
+			// rl.DrawRectangleV({-150, 15}, {300, 80}, rl.DARKBROWN)
+
+			// rl.DrawRectangleV({20, 20}, {10, 10}, rl.RED)
+			// rl.DrawRectangleV({-30, -20}, {10, 10}, rl.GREEN)
+
+			// iterate over player's previous positions, the head is the most recent position, as it's a ring buffer
+			last_pos_count := len(g_mem.previous_player_y)
+			for i in g_mem.previous_player_y_head ..< len(g_mem.previous_player_y) {
+				// draw offset -10 by last_pos_count
+				rl.DrawRectangleV(
+					{g_mem.player_pos.x - f32(10 * last_pos_count), g_mem.previous_player_y[i]},
+					{10, 10},
+					rl.WHITE,
+				)
+				last_pos_count -= 1
+			}
+			for i in 0 ..< g_mem.previous_player_y_head {
+				// draw offset -10 by last_pos_count
+				rl.DrawRectangleV(
+					{g_mem.player_pos.x - f32(10 * last_pos_count), g_mem.previous_player_y[i]},
+					{10, 10},
+					rl.WHITE,
+				)
+				last_pos_count -= 1
+			}
+
+			rl.DrawRectangleV(g_mem.player_pos, {10, 10}, rl.WHITE)
 		}
 		rl.EndMode2D()
 
 		rl.BeginMode2D(ui_camera())
 		{
 			// Note: main_hot_reload.odin clears the temp allocator at end of frame.
-			rl.DrawText(
-				fmt.ctprintf(
-					"some_number: %v\nplayer_pos: %v",
-					g_mem.some_number,
-					g_mem.player_pos,
-				),
-				5,
-				5,
-				8,
-				rl.WHITE,
+			stats := fmt.ctprintf(
+				"player_speed: %v\nplayer_pos: %v\nplayer_bg_pos: %v",
+				g_mem.player_speed,
+				g_mem.player_pos,
+				g_mem.background_positions[.DistantMountains],
 			)
+			rl.DrawText(stats, 5, 5, 8, rl.WHITE)
 
 		}
 		rl.EndMode2D()
@@ -102,7 +205,7 @@ game_update :: proc() -> bool {
 
 @(export)
 game_init_window :: proc() {
-	rl.SetConfigFlags({.WINDOW_RESIZABLE, .VSYNC_HINT})
+	rl.SetConfigFlags({.WINDOW_RESIZABLE, .VSYNC_HINT, .MSAA_4X_HINT})
 	rl.InitWindow(1280, 720, "Odin + Raylib + Hot Reload template!")
 	rl.SetWindowPosition(200, 200)
 	rl.SetTargetFPS(500)
@@ -113,7 +216,8 @@ game_init :: proc() {
 	g_mem = new(Game_Memory)
 
 	g_mem^ = Game_Memory {
-		some_number = 100,
+		player_speed             = 1.0,
+		above_background_texture = rl.LoadTexture("assets/above-background-sky.png"),
 	}
 
 	game_hot_reloaded(g_mem)
