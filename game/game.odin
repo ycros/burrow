@@ -20,6 +20,12 @@ import "core:fmt"
 // import "core:os"
 import rl "vendor:raylib"
 
+when ODIN_DEBUG {
+	DEBUG_PLAYER_INVINCIBLE :: true
+} else {
+	DEBUG_PLAYER_INVINCIBLE :: false
+}
+
 PIXEL_WINDOW_HEIGHT :: 320
 PLAYER_RENDER_TEXTURE_SIZE :: 2048 // Adjust these sizes based on your needs
 PLAYER_SEGMENT_SIZE :: 100
@@ -296,7 +302,9 @@ update_entities :: proc(dt: f32) {
 					entity.is_active = false
 					if entity.type == .Crate || entity.type == .Rock {
 						if rl.GetTime() - g_mem.last_hit_time > 1.5 {
-							g_mem.lives -= 1
+							if !DEBUG_PLAYER_INVINCIBLE {
+								g_mem.lives -= 1
+							}
 							g_mem.score = max(g_mem.score - 50, 0)
 							g_mem.last_hit_time = rl.GetTime()
 						}
@@ -356,7 +364,7 @@ update_entities :: proc(dt: f32) {
 			if above_ground {
 				pos.y = f32(rl.GetRandomValue(-50, -150))
 			} else {
-				pos.y = f32(rl.GetRandomValue(-6, -150))
+				pos.y = f32(rl.GetRandomValue(6, 150))
 			}
 			size = rl.Vector2{16, 16}
 		case .Apple:
