@@ -26,19 +26,19 @@ PLAYER_SEGMENT_SIZE :: 100
 PLAYER_RENDER_SCALE :: 0.2
 PLAYER_SEGMENT_DISTANCE :: 0.1
 
-ObstacleType :: enum {
+EntityType :: enum {
 	Crate,
 	Rock,
 }
 
-OBSTACLE_SPRITE_RECTS := [ObstacleType]rl.Rectangle {
+ENTITY_SPRITE_RECTS := [EntityType]rl.Rectangle {
 	.Crate = {1, 1, 32, 32},
 	.Rock  = {35, 1, 32, 32},
 }
 
-Obstacle :: struct {
+Entity :: struct {
 	is_active: bool,
-	type:      ObstacleType,
+	type:      EntityType,
 	pos:       rl.Vector2,
 	size:      rl.Vector2,
 }
@@ -56,7 +56,7 @@ Game_Memory :: struct {
 		underground:      rl.Texture2D,
 		player:           rl.Texture2D,
 		player_render:    rl.RenderTexture2D,
-		obstacles:        rl.Texture2D,
+		entities:         rl.Texture2D,
 	},
 	backgrounds:           struct {
 		above_background_positions: [AboveBackgroundSprites]rl.Vector2,
@@ -65,13 +65,15 @@ Game_Memory :: struct {
 	shaders:               struct {
 		player: rl.Shader,
 	},
-	obstacles:             []Obstacle,
+	entities:              []Entity,
 	release_decay_applied: bool,
 	chain_multiplier:      f32,
 	distance_travelled:    f64,
 	segment_distance:      f32,
 	previous_player_head:  int,
 	previous_player:       []rl.Vector2,
+	lives:                 int,
+	score:                 int,
 }
 g_mem: ^Game_Memory
 
@@ -105,6 +107,7 @@ ui_camera :: proc() -> rl.Camera2D {
 	return {zoom = f32(rl.GetScreenHeight()) / PIXEL_WINDOW_HEIGHT}
 }
 
+CHAIN_MULTIPLIER_MAX :: 1.5
 update_player :: proc(dt: f32) {
 	input_is_jumping :: proc() -> bool {
 		return rl.IsKeyDown(.K) || rl.IsGamepadButtonDown(0, .RIGHT_FACE_RIGHT)
@@ -129,9 +132,9 @@ update_player :: proc(dt: f32) {
 	JUMP_VELOCITY :: -5
 	BURROW_VELOCITY :: 3
 	RELEASE_DECAY :: 0.4
-	ACCELERATION :: 1.1
+	BURROW_DECELERATION :: 0.2
+	BURROW_JUMP_ACCELERATION :: 1.1
 	CHAIN_MULTIPLIER_INCREMENT :: 0.05
-	CHAIN_MULTIPLIER_MAX :: 1.5
 
 	// g_mem.player.speed += 0.0001 * dt
 
@@ -183,16 +186,20 @@ update_player :: proc(dt: f32) {
 
 	if g_mem.player.burrowing {
 		if !input_is_burrowing() && !g_mem.release_decay_applied && g_mem.player.velocity > 0 {
-			g_mem.player.velocity *= RELEASE_DECAY
+			g_mem.player.velocity *= RELEASE_DECAY * dt
 			g_mem.release_decay_applied = true
 		}
 
+		new_velocity := BURROW_GRAVITY * dt
+
 		if input_is_jumping() {
-			g_mem.player.velocity -= ACCELERATION * dt
+			g_mem.player.velocity -= BURROW_JUMP_ACCELERATION * dt
+		} else if g_mem.player.velocity < 0 && input_is_burrowing() {
+			new_velocity *= BURROW_DECELERATION
 		}
 
 		g_mem.player.pos.y += g_mem.player.velocity * dt
-		g_mem.player.velocity -= BURROW_GRAVITY * dt
+		g_mem.player.velocity -= new_velocity
 		if g_mem.player.pos.y <= 0 {
 			g_mem.player.burrowing = false
 			if input_is_jumping() {
@@ -260,35 +267,46 @@ update_backgrounds :: proc(dt: f32) {
 	}
 }
 
-update_obstacles :: proc(dt: f32) {
-	for &obstacle in g_mem.obstacles {
-		if obstacle.is_active {
-			obstacle.pos.x -= g_mem.player.speed * dt
-			if obstacle.pos.x < -320 {
-				obstacle.is_active = false
+update_entities :: proc(dt: f32) {
+	for &entity in g_mem.entities {
+		if entity.is_active {
+			entity.pos.x -= g_mem.player.speed * dt
+			if entity.pos.x < -320 {
+				entity.is_active = false
 			}
 		}
 	}
 
-	// given a random chance, spawn an obstacle
-	if rl.GetRandomValue(0, i32(100 * dt)) < 1 {
-		// fmt.println("DEBUG: Spawning obstacle")
-		type := ObstacleType(rl.GetRandomValue(0, len(ObstacleType) - 1))
+	// given a random chance, spawn an entity
+	if rl.GetRandomValue(0, i32(200 * dt)) < 1 {
+		// fmt.println("DEBUG: Spawning entity")
+		type := EntityType(rl.GetRandomValue(0, len(EntityType) - 1))
 		pos := rl.Vector2{320, 0}
 		size := rl.Vector2{32, 32}
+		variant := rl.GetRandomValue(0, 9)
 		switch type {
 		case .Crate:
-			pos.y = -6
+			if variant < 5 {
+				pos.y = f32(rl.GetRandomValue(-6, -80))
+			} else {
+				pos.y = -6
+			}
 			size = rl.Vector2{16, 16}
 		case .Rock:
-			pos.y = f32(rl.GetRandomValue(10, 100))
+			if variant < 3 {
+				pos.y = -22
+			} else if variant < 5 {
+				pos.y = 10
+			} else {
+				pos.y = f32(rl.GetRandomValue(10, 100))
+			}
 		}
-		for &obstacle in g_mem.obstacles {
-			if !obstacle.is_active {
-				obstacle.is_active = true
-				obstacle.type = type
-				obstacle.pos = pos
-				obstacle.size = size
+		for &entity in g_mem.entities {
+			if !entity.is_active {
+				entity.is_active = true
+				entity.type = type
+				entity.pos = pos
+				entity.size = size
 				break
 			}
 		}
@@ -303,7 +321,7 @@ update :: proc() {
 	update_player(dt)
 	update_player_segments(dt)
 	update_backgrounds(dt)
-	update_obstacles(dt)
+	update_entities(dt)
 }
 
 draw_backgrounds :: proc() {
@@ -323,7 +341,7 @@ draw_backgrounds :: proc() {
 			g_mem.textures.underground,
 			{
 				g_mem.backgrounds.underground_position.x + 320 * f32(i),
-				g_mem.backgrounds.underground_position.y,
+				g_mem.backgrounds.underground_position.y + 10,
 			},
 			rl.WHITE,
 		)
@@ -462,22 +480,22 @@ draw_player :: proc() {
 	// rl.DrawRectangleV(g_mem.player.pos, {10, 10}, rl.PURPLE)
 }
 
-draw_obstacles :: proc() {
-	for &obstacle in g_mem.obstacles {
-		if obstacle.is_active {
-			pos := obstacle.pos
+draw_entities :: proc() {
+	for &entity in g_mem.entities {
+		if entity.is_active {
+			pos := entity.pos
 			// pos.y += -(g_mem.player.pos.y / 10)
 			rl.DrawTexturePro(
-				g_mem.textures.obstacles,
-				OBSTACLE_SPRITE_RECTS[obstacle.type],
-				{pos.x, pos.y, obstacle.size.x, obstacle.size.y},
+				g_mem.textures.entities,
+				ENTITY_SPRITE_RECTS[entity.type],
+				{pos.x, pos.y, entity.size.x, entity.size.y},
 				{0, 0},
 				0,
 				rl.WHITE,
 			)
 
 			// debug rect
-			rl.DrawRectangleLinesEx({pos.x, pos.y, obstacle.size.x, obstacle.size.y}, 1, rl.RED)
+			rl.DrawRectangleLinesEx({pos.x, pos.y, entity.size.x, entity.size.y}, 1, rl.RED)
 		}
 	}
 }
@@ -492,21 +510,45 @@ draw :: proc() {
 		rl.BeginMode2D(game_camera())
 		{
 			draw_backgrounds()
-			draw_obstacles()
+			draw_entities()
 			draw_player()
 		}
 		rl.EndMode2D()
 
-		rl.BeginMode2D(ui_camera())
+		ui_camera := ui_camera()
+		rl.BeginMode2D(ui_camera)
 		{
+			ui_size := rl.GetScreenToWorld2D(
+				{f32(rl.GetScreenWidth()), f32(rl.GetScreenHeight())},
+				ui_camera,
+			)
+			// Draw rectangle on the top right corner of the screen
+			rl.DrawRectangle(i32(ui_size.x) - 110, 10, 100, 15, rl.Fade(rl.SKYBLUE, 0.5))
+			rl.DrawRectangle(
+				i32(ui_size.x) - 110,
+				10,
+				i32(((0.999 - g_mem.chain_multiplier) / (1 - CHAIN_MULTIPLIER_MAX)) * 100),
+				15,
+				rl.Fade(rl.WHITE, 0.5),
+			)
+
+			debug_stats := fmt.ctprintf(
+				"renderwidth: %v\nscreenwidth: %v",
+				ui_size.x,
+				rl.GetScreenWidth(),
+			)
+			rl.DrawText(debug_stats, 200, 5, 8, rl.WHITE)
+
 			// Note: main_hot_reload.odin clears the temp allocator at end of frame.
 			stats := fmt.ctprintf(
-				"player.speed: %v\nplayer.pos: %v\nplayer.velocity: %v\nchain_multiplier: %v\ndistance_travelled: %v",
+				"speed: %.2f\ndistance: %.0f\nlives: %d\tscore: %d",
 				g_mem.player.speed,
-				g_mem.player.pos,
-				g_mem.player.velocity,
-				g_mem.chain_multiplier,
+				// g_mem.player.pos,
+				// g_mem.player.velocity,
+				// g_mem.chain_multiplier,
 				g_mem.distance_travelled,
+				g_mem.lives,
+				g_mem.score,
 			)
 			rl.DrawText(stats, 5, 5, 8, rl.WHITE)
 		}
@@ -544,12 +586,13 @@ game_init :: proc() {
 				PLAYER_RENDER_TEXTURE_SIZE,
 				PLAYER_RENDER_TEXTURE_SIZE,
 			),
-			obstacles = rl.LoadTexture("assets/obstacles.png"),
+			entities = rl.LoadTexture("assets/entities.png"),
 		},
 		shaders = {player = rl.LoadShader(nil, "assets/player.fs")},
 		chain_multiplier = 1.0,
 		previous_player = make([]rl.Vector2, 256),
-		obstacles = make([]Obstacle, 32),
+		entities = make([]Entity, 32),
+		lives = 3,
 	}
 
 	rl.SetTextureWrap(g_mem.textures.player_render.texture, .CLAMP)
@@ -564,10 +607,10 @@ game_shutdown :: proc() {
 	rl.UnloadTexture(g_mem.textures.above_background)
 	rl.UnloadTexture(g_mem.textures.underground)
 	rl.UnloadTexture(g_mem.textures.player)
-	rl.UnloadTexture(g_mem.textures.obstacles)
+	rl.UnloadTexture(g_mem.textures.entities)
 	rl.UnloadShader(g_mem.shaders.player)
 	delete(g_mem.previous_player)
-	delete(g_mem.obstacles)
+	delete(g_mem.entities)
 	free(g_mem)
 }
 
