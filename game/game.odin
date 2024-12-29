@@ -920,7 +920,7 @@ game_update :: proc() -> bool {
 @(export)
 game_init_window :: proc() {
 	rl.SetConfigFlags({.WINDOW_RESIZABLE, .VSYNC_HINT, .MSAA_4X_HINT})
-	rl.InitWindow(1280, 720, "Odin + Raylib + Hot Reload template!")
+	rl.InitWindow(1280, 720, "Burrow")
 	rl.SetWindowPosition(200, 200)
 	rl.SetTargetFPS(500)
 }
