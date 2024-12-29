@@ -87,6 +87,7 @@ Game_Memory :: struct {
 	lives:                 int,
 	score:                 int,
 	screen_state:          ScreenStates,
+	last_hit_time:         f64,
 }
 g_mem: ^Game_Memory
 
@@ -294,8 +295,11 @@ update_entities :: proc(dt: f32) {
 				) {
 					entity.is_active = false
 					if entity.type == .Crate || entity.type == .Rock {
-						g_mem.lives -= 1
-						g_mem.score = max(g_mem.score - 50, 0)
+						if rl.GetTime() - g_mem.last_hit_time > 1.5 {
+							g_mem.lives -= 1
+							g_mem.score = max(g_mem.score - 50, 0)
+							g_mem.last_hit_time = rl.GetTime()
+						}
 					} else if entity.type == .Coin {
 						g_mem.score += int(f32(100) * g_mem.player.speed * g_mem.chain_multiplier)
 					} else if entity.type == .Apple {
@@ -348,7 +352,12 @@ update_entities :: proc(dt: f32) {
 				pos.y = f32(rl.GetRandomValue(10, 100))
 			}
 		case .Coin:
-			pos.y = f32(rl.GetRandomValue(-50, -150))
+			above_ground := rl.GetRandomValue(0, 100) < 80
+			if above_ground {
+				pos.y = f32(rl.GetRandomValue(-50, -150))
+			} else {
+				pos.y = f32(rl.GetRandomValue(-6, -150))
+			}
 			size = rl.Vector2{16, 16}
 		case .Apple:
 			pos.y = f32(rl.GetRandomValue(-6, -150))
@@ -531,6 +540,13 @@ draw_player :: proc() {
 		},
 		.VEC2,
 	)
+	isTransparent := 1 if rl.GetTime() - g_mem.last_hit_time < 1.5 else 0
+	rl.SetShaderValue(
+		g_mem.shaders.player,
+		rl.GetShaderLocation(g_mem.shaders.player, "isTransparent"),
+		&isTransparent,
+		.INT,
+	)
 	// Now draw the combined texture with shader
 	rl.BeginShaderMode(g_mem.shaders.player)
 	{
@@ -570,13 +586,19 @@ draw_entities :: proc() {
 		if entity.is_active {
 			pos := entity.pos
 			// pos.y += -(g_mem.player.pos.y / 10)
+			tint := rl.WHITE
+
+			if pos.y > 0 {
+				tint = rl.Fade(rl.WHITE, 0.3)
+			}
+
 			rl.DrawTexturePro(
 				g_mem.textures.entities,
 				ENTITY_SPRITE_RECTS[entity.type],
 				{pos.x, pos.y, entity.size.x, entity.size.y},
 				{0, 0},
 				0,
-				rl.WHITE,
+				tint,
 			)
 
 			// debug rect

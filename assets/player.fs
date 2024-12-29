@@ -3,6 +3,7 @@
 in vec2 fragTexCoord;
 uniform sampler2D currentTexture;
 uniform vec2 texelSize;
+uniform bool isTransparent;
 out vec4 FragColor;
 
 float getMinTransparentDistance() {
@@ -70,5 +71,17 @@ void main()
     float normalizedDist = clamp((dist - minDist) / (maxDist - minDist), 0.0, 1.0);
 
     vec3 finalColor = mix(innerColor, outerColor, normalizedDist);
+    // FragColor = vec4(finalColor, alpha);
+
+    // Add height-based darkening
+    float heightThreshold = 0.475; // Midpoint of texture
+    float darkeningStrength = 0.5; // How dark it gets (0 = black, 1 = no effect)
+    float heightFactor = smoothstep(heightThreshold - 0.02, heightThreshold + 0.02, fragTexCoord.y);
+    finalColor *= mix(darkeningStrength, 1.0, heightFactor);
+
+    if (isTransparent) {
+        alpha = alpha * 0.5;
+    }
+
     FragColor = vec4(finalColor, alpha);
 }
