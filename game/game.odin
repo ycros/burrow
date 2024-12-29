@@ -148,7 +148,7 @@ update_player :: proc(dt: f32) {
 	BURROW_JUMP_ACCELERATION :: 1.1
 	CHAIN_MULTIPLIER_INCREMENT :: 0.05
 
-	g_mem.player.speed += 0.0001 * dt
+	g_mem.player.speed += 0.00003 * dt
 
 	if !g_mem.player.jumping && !g_mem.player.burrowing {
 		if input_is_jumping() {
@@ -311,11 +311,21 @@ update_entities :: proc(dt: f32) {
 		// fmt.println("DEBUG: Spawning entity")
 		type_random := rl.GetRandomValue(0, 100)
 		type := EntityType.Crate
-		if type_random < 8 && g_mem.lives < MAX_LIVES {
+
+		// Calculate apple spawn chance based on lives
+		apple_chance: i32 = 8
+		if g_mem.lives < MAX_LIVES {
+			// Linear interpolation between 20% (1 life) and 8% (MAX_LIVES)
+			apple_chance = i32(20 - int((f32(g_mem.lives) / f32(MAX_LIVES)) * 12))
+		}
+
+		fmt.println("DEBUG: Apple chance", apple_chance)
+
+		if type_random < apple_chance && g_mem.lives < MAX_LIVES {
 			type = EntityType.Apple
-		} else if type_random < 20 {
+		} else if type_random < 30 {
 			type = EntityType.Coin
-		} else if type_random < 70 {
+		} else if type_random < 75 {
 			type = EntityType.Rock
 		}
 		pos := rl.Vector2{320, 0}
@@ -374,7 +384,7 @@ update :: proc() {
 	}
 	dt := rl.GetFrameTime() * 100
 
-	g_mem.distance_travelled += f64(g_mem.player.speed * dt)
+	g_mem.distance_travelled += f64(g_mem.player.speed * dt * 0.01)
 
 	update_player(dt)
 	update_player_segments(dt)
@@ -553,7 +563,7 @@ draw_entities :: proc() {
 			)
 
 			// debug rect
-			rl.DrawRectangleLinesEx({pos.x, pos.y, entity.size.x, entity.size.y}, 1, rl.RED)
+			// rl.DrawRectangleLinesEx({pos.x, pos.y, entity.size.x, entity.size.y}, 1, rl.RED)
 		}
 	}
 }
@@ -583,19 +593,47 @@ draw :: proc() {
 				ui_camera,
 			)
 
-			// draw big text in the middle of the screen
 			if g_mem.screen_state == .GameOver {
+				// Game Over text
+				game_over_text :: "Game Over"
+				text_width := rl.MeasureText(game_over_text, 40)
 				rl.DrawText(
-					"Game Over",
-					i32(ui_size.x) / 2 - 100,
-					i32(ui_size.y) / 2 - 25,
+					game_over_text,
+					i32(ui_size.x) / 2 - text_width / 2,
+					i32(ui_size.y) / 2 - 50,
 					40,
 					rl.WHITE,
 				)
+
+				// Score text
+				score_text := fmt.ctprintf("Score: %d", g_mem.score)
+				score_width := rl.MeasureText(score_text, 20)
 				rl.DrawText(
-					"Press SPACE (or START) to restart",
-					i32(ui_size.x) / 2 - 200,
+					score_text,
+					i32(ui_size.x) / 2 - score_width / 2,
+					i32(ui_size.y) / 2,
+					20,
+					rl.WHITE,
+				)
+
+				// Distance text
+				distance_text := fmt.ctprintf("Distance: %d m", i32(g_mem.distance_travelled))
+				distance_width := rl.MeasureText(distance_text, 20)
+				rl.DrawText(
+					distance_text,
+					i32(ui_size.x) / 2 - distance_width / 2,
 					i32(ui_size.y) / 2 + 25,
+					20,
+					rl.WHITE,
+				)
+
+				// Restart text
+				restart_text :: "Press SPACE (or START) to restart"
+				restart_width := rl.MeasureText(restart_text, 20)
+				rl.DrawText(
+					restart_text,
+					i32(ui_size.x) / 2 - restart_width / 2,
+					i32(ui_size.y) / 2 + 60,
 					20,
 					rl.WHITE,
 				)
@@ -603,43 +641,51 @@ draw :: proc() {
 
 			if g_mem.screen_state == .Game {
 				// momentum bar
-				rl.DrawRectangle(i32(ui_size.x) - 110, 10, 100, 15, rl.Fade(rl.SKYBLUE, 0.5))
+				momentum_text :: "momentum"
+				momentum_width := rl.MeasureText(momentum_text, 10)
+				bar_width :: 100
+				rl.DrawRectangle(i32(ui_size.x) - 110, 10, bar_width, 15, rl.Fade(rl.SKYBLUE, 0.5))
 				rl.DrawRectangle(
 					i32(ui_size.x) - 110,
 					10,
-					i32(((0.999 - g_mem.chain_multiplier) / (1 - CHAIN_MULTIPLIER_MAX)) * 100),
+					i32(
+						((0.999 - g_mem.chain_multiplier) / (1 - CHAIN_MULTIPLIER_MAX)) *
+						bar_width,
+					),
 					15,
 					rl.Fade(rl.WHITE, 0.5),
 				)
-				rl.DrawText("momentum", i32(ui_size.x) - 85, 12, 10, rl.WHITE)
+				rl.DrawText(
+					momentum_text,
+					i32(ui_size.x) - 110 + (bar_width / 2 - momentum_width / 2),
+					12,
+					10,
+					rl.WHITE,
+				)
 
-				// hp bar, middle of screen
-				rl.DrawRectangle(i32(ui_size.x) / 2 - 50, 10, 100, 15, rl.Fade(rl.RED, 0.5))
+				// hp bar
+				hp_text :: "hp"
+				hp_width := rl.MeasureText(hp_text, 10)
+				rl.DrawRectangle(i32(ui_size.x) / 2 - 50, 10, bar_width, 15, rl.Fade(rl.RED, 0.5))
 				rl.DrawRectangle(
 					i32(ui_size.x) / 2 - 50,
 					10,
-					i32((f32(g_mem.lives) / MAX_LIVES) * 100),
+					i32((f32(g_mem.lives) / MAX_LIVES) * bar_width),
 					15,
 					rl.Fade(rl.GREEN, 0.5),
 				)
-				rl.DrawText("hp", i32(ui_size.x) / 2 - 5, 12, 10, rl.WHITE)
+				rl.DrawText(
+					hp_text,
+					i32(ui_size.x) / 2 - 50 + (bar_width / 2 - hp_width / 2),
+					12,
+					10,
+					rl.WHITE,
+				)
 
-				// debug_stats := fmt.ctprintf(
-				// 	"renderwidth: %v\nscreenwidth: %v",
-				// 	ui_size.x,
-				// 	rl.GetScreenWidth(),
-				// )
-				// rl.DrawText(debug_stats, 200, 5, 8, rl.WHITE)
-
-				// Note: main_hot_reload.odin clears the temp allocator at end of frame.
 				stats := fmt.ctprintf(
-					"speed: %.2f\ndistance: %.0f\nlives: %d\tscore: %d",
+					"speed: %.2f\ndistance: %.0f\nscore: %d",
 					g_mem.player.speed,
-					// g_mem.player.pos,
-					// g_mem.player.velocity,
-					// g_mem.chain_multiplier,
 					g_mem.distance_travelled,
-					g_mem.lives,
 					g_mem.score,
 				)
 				rl.DrawText(stats, 5, 5, 8, rl.WHITE)
