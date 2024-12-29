@@ -25,15 +25,27 @@ PLAYER_RENDER_TEXTURE_SIZE :: 2048 // Adjust these sizes based on your needs
 PLAYER_SEGMENT_SIZE :: 100
 PLAYER_RENDER_SCALE :: 0.2
 PLAYER_SEGMENT_DISTANCE :: 0.1
+CHAIN_MULTIPLIER_MAX :: 1.5
+MAX_LIVES :: 5
+
+ScreenStates :: enum {
+	Intro,
+	Game,
+	GameOver,
+}
 
 EntityType :: enum {
 	Crate,
 	Rock,
+	Coin,
+	Apple,
 }
 
 ENTITY_SPRITE_RECTS := [EntityType]rl.Rectangle {
 	.Crate = {1, 1, 32, 32},
 	.Rock  = {35, 1, 32, 32},
+	.Coin  = {1, 35, 32, 32},
+	.Apple = {35, 35, 32, 32},
 }
 
 Entity :: struct {
@@ -74,6 +86,7 @@ Game_Memory :: struct {
 	previous_player:       []rl.Vector2,
 	lives:                 int,
 	score:                 int,
+	screen_state:          ScreenStates,
 }
 g_mem: ^Game_Memory
 
@@ -107,7 +120,6 @@ ui_camera :: proc() -> rl.Camera2D {
 	return {zoom = f32(rl.GetScreenHeight()) / PIXEL_WINDOW_HEIGHT}
 }
 
-CHAIN_MULTIPLIER_MAX :: 1.5
 update_player :: proc(dt: f32) {
 	input_is_jumping :: proc() -> bool {
 		return rl.IsKeyDown(.K) || rl.IsGamepadButtonDown(0, .RIGHT_FACE_RIGHT)
@@ -136,7 +148,7 @@ update_player :: proc(dt: f32) {
 	BURROW_JUMP_ACCELERATION :: 1.1
 	CHAIN_MULTIPLIER_INCREMENT :: 0.05
 
-	// g_mem.player.speed += 0.0001 * dt
+	g_mem.player.speed += 0.0001 * dt
 
 	if !g_mem.player.jumping && !g_mem.player.burrowing {
 		if input_is_jumping() {
@@ -273,6 +285,23 @@ update_entities :: proc(dt: f32) {
 			entity.pos.x -= g_mem.player.speed * dt
 			if entity.pos.x < -320 {
 				entity.is_active = false
+			} else {
+				radius: f32 = 5 if entity.type == .Crate || entity.type == .Rock else 10
+				if rl.CheckCollisionCircleRec(
+					g_mem.player.pos,
+					radius,
+					{entity.pos.x, entity.pos.y, entity.size.x, entity.size.y},
+				) {
+					entity.is_active = false
+					if entity.type == .Crate || entity.type == .Rock {
+						g_mem.lives -= 1
+						g_mem.score = max(g_mem.score - 50, 0)
+					} else if entity.type == .Coin {
+						g_mem.score += int(f32(100) * g_mem.player.speed * g_mem.chain_multiplier)
+					} else if entity.type == .Apple {
+						g_mem.lives += 1
+					}
+				}
 			}
 		}
 	}
@@ -280,7 +309,15 @@ update_entities :: proc(dt: f32) {
 	// given a random chance, spawn an entity
 	if rl.GetRandomValue(0, i32(200 * dt)) < 1 {
 		// fmt.println("DEBUG: Spawning entity")
-		type := EntityType(rl.GetRandomValue(0, len(EntityType) - 1))
+		type_random := rl.GetRandomValue(0, 100)
+		type := EntityType.Crate
+		if type_random < 8 && g_mem.lives < MAX_LIVES {
+			type = EntityType.Apple
+		} else if type_random < 20 {
+			type = EntityType.Coin
+		} else if type_random < 70 {
+			type = EntityType.Rock
+		}
 		pos := rl.Vector2{320, 0}
 		size := rl.Vector2{32, 32}
 		variant := rl.GetRandomValue(0, 9)
@@ -300,6 +337,12 @@ update_entities :: proc(dt: f32) {
 			} else {
 				pos.y = f32(rl.GetRandomValue(10, 100))
 			}
+		case .Coin:
+			pos.y = f32(rl.GetRandomValue(-50, -150))
+			size = rl.Vector2{16, 16}
+		case .Apple:
+			pos.y = f32(rl.GetRandomValue(-6, -150))
+			size = rl.Vector2{16, 16}
 		}
 		for &entity in g_mem.entities {
 			if !entity.is_active {
@@ -314,6 +357,21 @@ update_entities :: proc(dt: f32) {
 }
 
 update :: proc() {
+	if g_mem.lives <= 0 {
+		g_mem.screen_state = .GameOver
+	}
+	if rl.IsGamepadButtonPressed(0, .MIDDLE_RIGHT) {
+		game_state_reset()
+		g_mem.screen_state = .Game
+	}
+	if g_mem.screen_state != .Game {
+		if rl.IsKeyPressed(.SPACE) {
+			game_state_reset()
+			g_mem.screen_state = .Game
+		} else {
+			return
+		}
+	}
 	dt := rl.GetFrameTime() * 100
 
 	g_mem.distance_travelled += f64(g_mem.player.speed * dt)
@@ -507,13 +565,15 @@ draw :: proc() {
 	{
 		rl.ClearBackground(rl.BLACK)
 
-		rl.BeginMode2D(game_camera())
-		{
-			draw_backgrounds()
-			draw_entities()
-			draw_player()
+		if g_mem.screen_state == .Game {
+			rl.BeginMode2D(game_camera())
+			{
+				draw_backgrounds()
+				draw_entities()
+				draw_player()
+			}
+			rl.EndMode2D()
 		}
-		rl.EndMode2D()
 
 		ui_camera := ui_camera()
 		rl.BeginMode2D(ui_camera)
@@ -522,35 +582,69 @@ draw :: proc() {
 				{f32(rl.GetScreenWidth()), f32(rl.GetScreenHeight())},
 				ui_camera,
 			)
-			// Draw rectangle on the top right corner of the screen
-			rl.DrawRectangle(i32(ui_size.x) - 110, 10, 100, 15, rl.Fade(rl.SKYBLUE, 0.5))
-			rl.DrawRectangle(
-				i32(ui_size.x) - 110,
-				10,
-				i32(((0.999 - g_mem.chain_multiplier) / (1 - CHAIN_MULTIPLIER_MAX)) * 100),
-				15,
-				rl.Fade(rl.WHITE, 0.5),
-			)
 
-			debug_stats := fmt.ctprintf(
-				"renderwidth: %v\nscreenwidth: %v",
-				ui_size.x,
-				rl.GetScreenWidth(),
-			)
-			rl.DrawText(debug_stats, 200, 5, 8, rl.WHITE)
+			// draw big text in the middle of the screen
+			if g_mem.screen_state == .GameOver {
+				rl.DrawText(
+					"Game Over",
+					i32(ui_size.x) / 2 - 100,
+					i32(ui_size.y) / 2 - 25,
+					40,
+					rl.WHITE,
+				)
+				rl.DrawText(
+					"Press SPACE (or START) to restart",
+					i32(ui_size.x) / 2 - 200,
+					i32(ui_size.y) / 2 + 25,
+					20,
+					rl.WHITE,
+				)
+			}
 
-			// Note: main_hot_reload.odin clears the temp allocator at end of frame.
-			stats := fmt.ctprintf(
-				"speed: %.2f\ndistance: %.0f\nlives: %d\tscore: %d",
-				g_mem.player.speed,
-				// g_mem.player.pos,
-				// g_mem.player.velocity,
-				// g_mem.chain_multiplier,
-				g_mem.distance_travelled,
-				g_mem.lives,
-				g_mem.score,
-			)
-			rl.DrawText(stats, 5, 5, 8, rl.WHITE)
+			if g_mem.screen_state == .Game {
+				// momentum bar
+				rl.DrawRectangle(i32(ui_size.x) - 110, 10, 100, 15, rl.Fade(rl.SKYBLUE, 0.5))
+				rl.DrawRectangle(
+					i32(ui_size.x) - 110,
+					10,
+					i32(((0.999 - g_mem.chain_multiplier) / (1 - CHAIN_MULTIPLIER_MAX)) * 100),
+					15,
+					rl.Fade(rl.WHITE, 0.5),
+				)
+				rl.DrawText("momentum", i32(ui_size.x) - 85, 12, 10, rl.WHITE)
+
+				// hp bar, middle of screen
+				rl.DrawRectangle(i32(ui_size.x) / 2 - 50, 10, 100, 15, rl.Fade(rl.RED, 0.5))
+				rl.DrawRectangle(
+					i32(ui_size.x) / 2 - 50,
+					10,
+					i32((f32(g_mem.lives) / MAX_LIVES) * 100),
+					15,
+					rl.Fade(rl.GREEN, 0.5),
+				)
+				rl.DrawText("hp", i32(ui_size.x) / 2 - 5, 12, 10, rl.WHITE)
+
+				// debug_stats := fmt.ctprintf(
+				// 	"renderwidth: %v\nscreenwidth: %v",
+				// 	ui_size.x,
+				// 	rl.GetScreenWidth(),
+				// )
+				// rl.DrawText(debug_stats, 200, 5, 8, rl.WHITE)
+
+				// Note: main_hot_reload.odin clears the temp allocator at end of frame.
+				stats := fmt.ctprintf(
+					"speed: %.2f\ndistance: %.0f\nlives: %d\tscore: %d",
+					g_mem.player.speed,
+					// g_mem.player.pos,
+					// g_mem.player.velocity,
+					// g_mem.chain_multiplier,
+					g_mem.distance_travelled,
+					g_mem.lives,
+					g_mem.score,
+				)
+				rl.DrawText(stats, 5, 5, 8, rl.WHITE)
+
+			}
 		}
 		rl.EndMode2D()
 	}
@@ -572,12 +666,31 @@ game_init_window :: proc() {
 	rl.SetTargetFPS(500)
 }
 
+game_state_reset :: proc() {
+	g_mem.player = {
+		speed = 1.0,
+		pos   = {-120, 0},
+	}
+	g_mem.chain_multiplier = 1.0
+	g_mem.distance_travelled = 0
+	g_mem.lives = MAX_LIVES
+	g_mem.score = 0
+	delete(g_mem.previous_player)
+	delete(g_mem.entities)
+	g_mem.previous_player = make([]rl.Vector2, 256)
+	g_mem.entities = make([]Entity, 64)
+
+	for &pp in g_mem.previous_player {
+		pp.x = -500
+	}
+}
+
 @(export)
 game_init :: proc() {
 	g_mem = new(Game_Memory)
 
 	g_mem^ = Game_Memory {
-		player = {speed = 1.0, pos = {-120, 0}},
+		// player = {speed = 1.0, pos = {-120, 0}},
 		textures = {
 			above_background = rl.LoadTexture("assets/above-background-sky.png"),
 			underground = rl.LoadTexture("assets/underground.png"),
@@ -589,11 +702,14 @@ game_init :: proc() {
 			entities = rl.LoadTexture("assets/entities.png"),
 		},
 		shaders = {player = rl.LoadShader(nil, "assets/player.fs")},
-		chain_multiplier = 1.0,
-		previous_player = make([]rl.Vector2, 256),
-		entities = make([]Entity, 32),
-		lives = 3,
+		// chain_multiplier = 1.0,
+		// previous_player = make([]rl.Vector2, 256),
+		// entities = make([]Entity, 64),
+		// lives = MAX_LIVES,
+		screen_state = .Intro,
 	}
+
+	game_state_reset()
 
 	rl.SetTextureWrap(g_mem.textures.player_render.texture, .CLAMP)
 	rl.SetTextureFilter(g_mem.textures.player_render.texture, .TRILINEAR)
