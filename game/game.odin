@@ -45,9 +45,10 @@ EntityType :: enum {
 	Rock,
 	Coin,
 	Apple,
+	Explosion,
 }
 
-ENTITY_SPRITE_RECTS := [EntityType]rl.Rectangle {
+ENTITY_SPRITE_RECTS := #partial [EntityType]rl.Rectangle {
 	.Crate = {1, 1, 32, 32},
 	.Rock  = {35, 1, 32, 32},
 	.Coin  = {1, 35, 32, 32},
@@ -55,10 +56,11 @@ ENTITY_SPRITE_RECTS := [EntityType]rl.Rectangle {
 }
 
 Entity :: struct {
-	is_active: bool,
-	type:      EntityType,
-	pos:       rl.Vector2,
-	size:      rl.Vector2,
+	is_active:          bool,
+	type:               EntityType,
+	pos:                rl.Vector2,
+	size:               rl.Vector2,
+	animation_progress: f32,
 }
 
 Game_Memory :: struct {
@@ -287,11 +289,29 @@ update_backgrounds :: proc(dt: f32) {
 }
 
 update_entities :: proc(dt: f32) {
+	spawn_explosion :: proc(pos: rl.Vector2) {
+		for &entity in g_mem.entities {
+			if !entity.is_active {
+				entity.is_active = true
+				entity.type = .Explosion
+				entity.pos = pos
+				entity.animation_progress = 0
+				break
+			}
+		}
+	}
+
 	for &entity in g_mem.entities {
 		if entity.is_active {
 			entity.pos.x -= g_mem.player.speed * dt
 			if entity.pos.x < -320 {
 				entity.is_active = false
+			} else if entity.type == .Explosion {
+				entity.animation_progress += 0.01 * dt
+				if entity.animation_progress >= 1.0 {
+					entity.is_active = false
+					entity.animation_progress = 0
+				}
 			} else {
 				radius: f32 = 5 if entity.type == .Crate || entity.type == .Rock else 10
 				if rl.CheckCollisionCircleRec(
@@ -301,6 +321,7 @@ update_entities :: proc(dt: f32) {
 				) {
 					entity.is_active = false
 					if entity.type == .Crate || entity.type == .Rock {
+						spawn_explosion(entity.pos + {0, entity.size.y / 2})
 						if rl.GetTime() - g_mem.last_hit_time > 1.5 {
 							if !DEBUG_PLAYER_INVINCIBLE {
 								g_mem.lives -= 1
@@ -319,7 +340,9 @@ update_entities :: proc(dt: f32) {
 	}
 
 	// given a random chance, spawn an entity
-	if rl.GetRandomValue(0, i32(200 * dt)) < 1 {
+	max_random := max(i32(200 * dt / g_mem.player.speed), 2)
+	if rl.GetRandomValue(0, max_random) < 1 {
+		fmt.println("DEBUG: max_random", max_random)
 		// fmt.println("DEBUG: Spawning entity")
 		type_random := rl.GetRandomValue(0, 100)
 		type := EntityType.Crate
@@ -370,6 +393,7 @@ update_entities :: proc(dt: f32) {
 		case .Apple:
 			pos.y = f32(rl.GetRandomValue(-6, -150))
 			size = rl.Vector2{16, 16}
+		case .Explosion:
 		}
 		for &entity in g_mem.entities {
 			if !entity.is_active {
@@ -591,27 +615,37 @@ draw_player :: proc() {
 
 draw_entities :: proc() {
 	for &entity in g_mem.entities {
-		if entity.is_active {
-			pos := entity.pos
-			// pos.y += -(g_mem.player.pos.y / 10)
-			tint := rl.WHITE
+		if !entity.is_active do continue
 
-			if pos.y > 0 {
-				tint = rl.Fade(rl.WHITE, 0.3)
-			}
+		if entity.type == .Explosion {
+			// fade to transparent
+			alpha := 1.0 - entity.animation_progress
+			color := rl.ColorAlpha(rl.Color{196, 148, 94, 255}, alpha)
 
-			rl.DrawTexturePro(
-				g_mem.textures.entities,
-				ENTITY_SPRITE_RECTS[entity.type],
-				{pos.x, pos.y, entity.size.x, entity.size.y},
-				{0, 0},
-				0,
-				tint,
-			)
+			// Expand size based on progress
+			radius := 8 + 16 * entity.animation_progress
 
-			// debug rect
-			// rl.DrawRectangleLinesEx({pos.x, pos.y, entity.size.x, entity.size.y}, 1, rl.RED)
+			rl.DrawCircleV(entity.pos, radius, color)
+			continue
 		}
+
+		pos := entity.pos
+		// pos.y += -(g_mem.player.pos.y / 10)
+		tint := rl.WHITE
+		if pos.y > 0 {
+			tint = rl.Fade(rl.WHITE, 0.3)
+		}
+		rl.DrawTexturePro(
+			g_mem.textures.entities,
+			ENTITY_SPRITE_RECTS[entity.type],
+			{pos.x, pos.y, entity.size.x, entity.size.y},
+			{0, 0},
+			0,
+			tint,
+		)
+
+		// debug rect
+		// rl.DrawRectangleLinesEx({pos.x, pos.y, entity.size.x, entity.size.y}, 1, rl.RED)
 	}
 }
 
