@@ -122,11 +122,11 @@ ui_camera :: proc() -> rl.Camera2D {
 
 update_player :: proc(dt: f32) {
 	input_is_jumping :: proc() -> bool {
-		return rl.IsKeyDown(.K) || rl.IsGamepadButtonDown(0, .RIGHT_FACE_RIGHT)
+		return rl.IsKeyDown(.K) || rl.IsKeyDown(.W) || rl.IsGamepadButtonDown(0, .RIGHT_FACE_RIGHT)
 	}
 
 	input_is_burrowing :: proc() -> bool {
-		return rl.IsKeyDown(.J) || rl.IsGamepadButtonDown(0, .RIGHT_FACE_DOWN)
+		return rl.IsKeyDown(.J) || rl.IsKeyDown(.S) || rl.IsGamepadButtonDown(0, .RIGHT_FACE_DOWN)
 	}
 
 	// [DEBUG]
@@ -367,21 +367,38 @@ update_entities :: proc(dt: f32) {
 }
 
 update :: proc() {
-	if g_mem.lives <= 0 {
-		g_mem.screen_state = .GameOver
+	input_reset_pressed :: proc() -> bool {
+		return rl.IsGamepadButtonPressed(0, .MIDDLE_RIGHT) || rl.IsKeyPressed(.ENTER)
 	}
-	if rl.IsGamepadButtonPressed(0, .MIDDLE_RIGHT) {
+	input_start_pressed :: proc() -> bool {
+		return input_reset_pressed() || rl.IsKeyPressed(.SPACE)
+	}
+
+	if g_mem.screen_state == .GameOver {
+		if input_start_pressed() {
+			fmt.println("DEBUG: GameOver -> Intro")
+			g_mem.screen_state = .Intro
+		}
+		return
+	}
+	if g_mem.screen_state == .Intro {
+		if input_start_pressed() {
+			fmt.println("DEBUG: Intro -> Game")
+			game_state_reset()
+			g_mem.screen_state = .Game
+		}
+		return
+	}
+
+	if input_reset_pressed() {
 		game_state_reset()
 		g_mem.screen_state = .Game
 	}
-	if g_mem.screen_state != .Game {
-		if rl.IsKeyPressed(.SPACE) {
-			game_state_reset()
-			g_mem.screen_state = .Game
-		} else {
-			return
-		}
+
+	if g_mem.lives <= 0 {
+		g_mem.screen_state = .GameOver
 	}
+
 	dt := rl.GetFrameTime() * 100
 
 	g_mem.distance_travelled += f64(g_mem.player.speed * dt * 0.01)
@@ -568,6 +585,205 @@ draw_entities :: proc() {
 	}
 }
 
+draw_ui_intro :: proc(ui_size: rl.Vector2) {
+	title_size :: 50
+	text_size :: 20
+	small_text_size :: 15
+
+	center_x := ui_size.x / 2
+	title_y := ui_size.y / 7
+
+	// Title
+	title_text :: "BURROW"
+	title_width := f32(rl.MeasureText(title_text, title_size))
+	rl.DrawText(title_text, i32(center_x - title_width / 2), i32(title_y), title_size, rl.WHITE)
+
+	// Controls
+	controls_y := title_y + 60
+	controls_text :: "Press ENTER/SPACE/START to play"
+	controls_width := f32(rl.MeasureText(controls_text, text_size))
+	rl.DrawText(
+		controls_text,
+		i32(center_x - controls_width / 2),
+		i32(controls_y),
+		text_size,
+		rl.GRAY,
+	)
+
+	jump_text :: "W/K/B Button - Jump"
+	jump_width := f32(rl.MeasureText(jump_text, text_size))
+	rl.DrawText(
+		jump_text,
+		i32(center_x - jump_width / 2),
+		i32(controls_y + 30),
+		text_size,
+		rl.GRAY,
+	)
+
+	burrow_text :: "S/J/A Button - Burrow"
+	burrow_width := f32(rl.MeasureText(burrow_text, text_size))
+	rl.DrawText(
+		burrow_text,
+		i32(center_x - burrow_width / 2),
+		i32(controls_y + 60),
+		text_size,
+		rl.GRAY,
+	)
+
+	// Entity examples
+	draw_entity_example :: proc(
+		pos: rl.Vector2,
+		entity_type: EntityType,
+		label: cstring,
+		sub_label: cstring,
+		small_text_size: i32,
+	) {
+		// Draw entity sprite
+		// rl.DrawTextureRec(g_mem.textures.entities, ENTITY_SPRITE_RECTS[entity_type], pos, rl.WHITE)
+		rl.DrawTexturePro(
+			g_mem.textures.entities,
+			ENTITY_SPRITE_RECTS[entity_type],
+			{pos.x - 12, pos.y + 12, 24, 24},
+			{0, 0},
+			0,
+			rl.WHITE,
+		)
+
+		// Draw label
+		label_width := f32(rl.MeasureText(label, small_text_size))
+		rl.DrawText(label, i32(pos.x - label_width / 2), i32(pos.y + 40), small_text_size, rl.GRAY)
+
+		// Draw sub label
+		sub_label_width := f32(rl.MeasureText(sub_label, small_text_size))
+		rl.DrawText(
+			sub_label,
+			i32(pos.x - sub_label_width / 2),
+			i32(pos.y + 60),
+			small_text_size,
+			rl.GRAY,
+		)
+	}
+
+	example_y := ui_size.y / 2 + 50
+	spacing: f32 = 100
+
+	// Start from left side and space entities evenly
+	example_x := center_x - f32(spacing) * 1.5
+
+	// Rock
+	draw_entity_example({example_x, example_y}, .Rock, "Rock", "(Obstacle)", small_text_size)
+	draw_entity_example(
+		{example_x + spacing, example_y},
+		.Crate,
+		"Crate",
+		"(Obstacle)",
+		small_text_size,
+	)
+	draw_entity_example(
+		{example_x + spacing * 2, example_y},
+		.Coin,
+		"Coin",
+		"(Score)",
+		small_text_size,
+	)
+	draw_entity_example(
+		{example_x + spacing * 3, example_y},
+		.Apple,
+		"Apple",
+		"(Health)",
+		small_text_size,
+	)
+}
+
+draw_ui_game_over :: proc(ui_size: rl.Vector2) {
+	// Game Over text
+	game_over_text :: "Game Over"
+	text_width := rl.MeasureText(game_over_text, 40)
+	rl.DrawText(
+		game_over_text,
+		i32(ui_size.x) / 2 - text_width / 2,
+		i32(ui_size.y) / 2 - 50,
+		40,
+		rl.WHITE,
+	)
+
+	// Score text
+	score_text := fmt.ctprintf("Score: %d", g_mem.score)
+	score_width := rl.MeasureText(score_text, 20)
+	rl.DrawText(score_text, i32(ui_size.x) / 2 - score_width / 2, i32(ui_size.y) / 2, 20, rl.WHITE)
+
+	// Distance text
+	distance_text := fmt.ctprintf("Distance: %d m", i32(g_mem.distance_travelled))
+	distance_width := rl.MeasureText(distance_text, 20)
+	rl.DrawText(
+		distance_text,
+		i32(ui_size.x) / 2 - distance_width / 2,
+		i32(ui_size.y) / 2 + 25,
+		20,
+		rl.WHITE,
+	)
+
+	// Restart text
+	restart_text :: "Press SPACE (or START) to restart"
+	restart_width := rl.MeasureText(restart_text, 20)
+	rl.DrawText(
+		restart_text,
+		i32(ui_size.x) / 2 - restart_width / 2,
+		i32(ui_size.y) / 2 + 60,
+		20,
+		rl.WHITE,
+	)
+}
+
+draw_ui_game :: proc(ui_size: rl.Vector2) {
+	// momentum bar
+	momentum_text :: "momentum"
+	momentum_width := rl.MeasureText(momentum_text, 10)
+	bar_width :: 100
+	rl.DrawRectangle(i32(ui_size.x) - 110, 10, bar_width, 15, rl.Fade(rl.SKYBLUE, 0.5))
+	rl.DrawRectangle(
+		i32(ui_size.x) - 110,
+		10,
+		i32(((0.999 - g_mem.chain_multiplier) / (1 - CHAIN_MULTIPLIER_MAX)) * bar_width),
+		15,
+		rl.Fade(rl.WHITE, 0.5),
+	)
+	rl.DrawText(
+		momentum_text,
+		i32(ui_size.x) - 110 + (bar_width / 2 - momentum_width / 2),
+		12,
+		10,
+		rl.WHITE,
+	)
+
+	// hp bar
+	hp_text :: "hp"
+	hp_width := rl.MeasureText(hp_text, 10)
+	rl.DrawRectangle(i32(ui_size.x) / 2 - 50, 10, bar_width, 15, rl.Fade(rl.RED, 0.5))
+	rl.DrawRectangle(
+		i32(ui_size.x) / 2 - 50,
+		10,
+		i32((f32(g_mem.lives) / MAX_LIVES) * bar_width),
+		15,
+		rl.Fade(rl.GREEN, 0.5),
+	)
+	rl.DrawText(
+		hp_text,
+		i32(ui_size.x) / 2 - 50 + (bar_width / 2 - hp_width / 2),
+		12,
+		10,
+		rl.WHITE,
+	)
+
+	stats := fmt.ctprintf(
+		"speed: %.2f\ndistance: %.0f\nscore: %d",
+		g_mem.player.speed,
+		g_mem.distance_travelled,
+		g_mem.score,
+	)
+	rl.DrawText(stats, 5, 5, 8, rl.WHITE)
+}
+
 draw :: proc() {
 	render_player()
 
@@ -593,103 +809,13 @@ draw :: proc() {
 				ui_camera,
 			)
 
-			if g_mem.screen_state == .GameOver {
-				// Game Over text
-				game_over_text :: "Game Over"
-				text_width := rl.MeasureText(game_over_text, 40)
-				rl.DrawText(
-					game_over_text,
-					i32(ui_size.x) / 2 - text_width / 2,
-					i32(ui_size.y) / 2 - 50,
-					40,
-					rl.WHITE,
-				)
-
-				// Score text
-				score_text := fmt.ctprintf("Score: %d", g_mem.score)
-				score_width := rl.MeasureText(score_text, 20)
-				rl.DrawText(
-					score_text,
-					i32(ui_size.x) / 2 - score_width / 2,
-					i32(ui_size.y) / 2,
-					20,
-					rl.WHITE,
-				)
-
-				// Distance text
-				distance_text := fmt.ctprintf("Distance: %d m", i32(g_mem.distance_travelled))
-				distance_width := rl.MeasureText(distance_text, 20)
-				rl.DrawText(
-					distance_text,
-					i32(ui_size.x) / 2 - distance_width / 2,
-					i32(ui_size.y) / 2 + 25,
-					20,
-					rl.WHITE,
-				)
-
-				// Restart text
-				restart_text :: "Press SPACE (or START) to restart"
-				restart_width := rl.MeasureText(restart_text, 20)
-				rl.DrawText(
-					restart_text,
-					i32(ui_size.x) / 2 - restart_width / 2,
-					i32(ui_size.y) / 2 + 60,
-					20,
-					rl.WHITE,
-				)
-			}
-
-			if g_mem.screen_state == .Game {
-				// momentum bar
-				momentum_text :: "momentum"
-				momentum_width := rl.MeasureText(momentum_text, 10)
-				bar_width :: 100
-				rl.DrawRectangle(i32(ui_size.x) - 110, 10, bar_width, 15, rl.Fade(rl.SKYBLUE, 0.5))
-				rl.DrawRectangle(
-					i32(ui_size.x) - 110,
-					10,
-					i32(
-						((0.999 - g_mem.chain_multiplier) / (1 - CHAIN_MULTIPLIER_MAX)) *
-						bar_width,
-					),
-					15,
-					rl.Fade(rl.WHITE, 0.5),
-				)
-				rl.DrawText(
-					momentum_text,
-					i32(ui_size.x) - 110 + (bar_width / 2 - momentum_width / 2),
-					12,
-					10,
-					rl.WHITE,
-				)
-
-				// hp bar
-				hp_text :: "hp"
-				hp_width := rl.MeasureText(hp_text, 10)
-				rl.DrawRectangle(i32(ui_size.x) / 2 - 50, 10, bar_width, 15, rl.Fade(rl.RED, 0.5))
-				rl.DrawRectangle(
-					i32(ui_size.x) / 2 - 50,
-					10,
-					i32((f32(g_mem.lives) / MAX_LIVES) * bar_width),
-					15,
-					rl.Fade(rl.GREEN, 0.5),
-				)
-				rl.DrawText(
-					hp_text,
-					i32(ui_size.x) / 2 - 50 + (bar_width / 2 - hp_width / 2),
-					12,
-					10,
-					rl.WHITE,
-				)
-
-				stats := fmt.ctprintf(
-					"speed: %.2f\ndistance: %.0f\nscore: %d",
-					g_mem.player.speed,
-					g_mem.distance_travelled,
-					g_mem.score,
-				)
-				rl.DrawText(stats, 5, 5, 8, rl.WHITE)
-
+			switch g_mem.screen_state {
+			case .Intro:
+				draw_ui_intro(ui_size)
+			case .GameOver:
+				draw_ui_game_over(ui_size)
+			case .Game:
+				draw_ui_game(ui_size)
 			}
 		}
 		rl.EndMode2D()
