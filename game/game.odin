@@ -26,33 +26,52 @@ PLAYER_SEGMENT_SIZE :: 100
 PLAYER_RENDER_SCALE :: 0.2
 PLAYER_SEGMENT_DISTANCE :: 0.1
 
+ObstacleType :: enum {
+	Crate,
+	Rock,
+}
+
+OBSTACLE_SPRITE_RECTS := [ObstacleType]rl.Rectangle {
+	.Crate = {1, 1, 32, 32},
+	.Rock  = {35, 1, 32, 32},
+}
+
 Obstacle :: struct {
 	is_active: bool,
+	type:      ObstacleType,
 	pos:       rl.Vector2,
 	size:      rl.Vector2,
 }
 
 Game_Memory :: struct {
-	player_pos:                 rl.Vector2,
-	player_speed:               f32,
-	player_velocity:            f32,
-	player_jumping:             bool,
-	player_burrowing:           bool,
-	above_background_texture:   rl.Texture2D,
-	underground_texture:        rl.Texture2D,
-	above_background_positions: [AboveBackgroundSprites]rl.Vector2,
-	underground_position:       rl.Vector2,
-	obstacles:                  [16]Obstacle,
-	previous_player_y_head:     int,
-	// previous_player_y_snapshot_time: f64,
-	player_shader:              rl.Shader,
-	player_texture:             rl.Texture2D,
-	player_render_texture:      rl.RenderTexture2D,
-	release_decay_applied:      bool,
-	chain_multiplier:           f32,
-	distance_travelled:         f64,
-	segment_distance:           f32,
-	previous_player_y:          [64]f32,
+	player:                struct {
+		pos:       rl.Vector2,
+		speed:     f32,
+		velocity:  f32,
+		jumping:   bool,
+		burrowing: bool,
+	},
+	textures:              struct {
+		above_background: rl.Texture2D,
+		underground:      rl.Texture2D,
+		player:           rl.Texture2D,
+		player_render:    rl.RenderTexture2D,
+		obstacles:        rl.Texture2D,
+	},
+	backgrounds:           struct {
+		above_background_positions: [AboveBackgroundSprites]rl.Vector2,
+		underground_position:       rl.Vector2,
+	},
+	shaders:               struct {
+		player: rl.Shader,
+	},
+	obstacles:             []Obstacle,
+	release_decay_applied: bool,
+	chain_multiplier:      f32,
+	distance_travelled:    f64,
+	segment_distance:      f32,
+	previous_player_head:  int,
+	previous_player:       []rl.Vector2,
 }
 g_mem: ^Game_Memory
 
@@ -76,8 +95,8 @@ game_camera :: proc() -> rl.Camera2D {
 
 	return {
 		zoom   = h / PIXEL_WINDOW_HEIGHT,
-		target = g_mem.player_pos,
-		// target = g_mem.player_pos + {180, 0},
+		target = {0, g_mem.player.pos.y},
+		// target = g_mem.player.pos + {180, 0},
 		offset = {w / 2, h / 2},
 	}
 }
@@ -86,15 +105,24 @@ ui_camera :: proc() -> rl.Camera2D {
 	return {zoom = f32(rl.GetScreenHeight()) / PIXEL_WINDOW_HEIGHT}
 }
 
-input_is_jumping :: proc() -> bool {
-	return rl.IsKeyDown(.K) || rl.IsGamepadButtonDown(0, .RIGHT_FACE_RIGHT)
-}
+update_player :: proc(dt: f32) {
+	input_is_jumping :: proc() -> bool {
+		return rl.IsKeyDown(.K) || rl.IsGamepadButtonDown(0, .RIGHT_FACE_RIGHT)
+	}
 
-input_is_burrowing :: proc() -> bool {
-	return rl.IsKeyDown(.J) || rl.IsGamepadButtonDown(0, .RIGHT_FACE_DOWN)
-}
+	input_is_burrowing :: proc() -> bool {
+		return rl.IsKeyDown(.J) || rl.IsGamepadButtonDown(0, .RIGHT_FACE_DOWN)
+	}
 
-update :: proc() {
+	// [DEBUG]
+	if rl.IsGamepadButtonDown(0, .LEFT_FACE_RIGHT) {
+		g_mem.player.speed += 0.01
+	}
+	if rl.IsGamepadButtonDown(0, .LEFT_FACE_LEFT) {
+		g_mem.player.speed -= 0.01
+	}
+	// [DEBUG]
+
 	GRAVITY :: 0.2
 	BURROW_GRAVITY :: 0.1
 	FALL_MULTIPLIER :: 0.5
@@ -105,137 +133,186 @@ update :: proc() {
 	CHAIN_MULTIPLIER_INCREMENT :: 0.05
 	CHAIN_MULTIPLIER_MAX :: 1.5
 
-	dt := rl.GetFrameTime() * 100
+	// g_mem.player.speed += 0.0001 * dt
 
-	g_mem.distance_travelled += f64(g_mem.player_speed * dt)
-	g_mem.player_speed += 0.0001 * dt
-
-	if !g_mem.player_jumping && !g_mem.player_burrowing {
+	if !g_mem.player.jumping && !g_mem.player.burrowing {
 		if input_is_jumping() {
-			if g_mem.player_pos.y == 0 {
-				g_mem.player_jumping = true
-				g_mem.player_velocity = JUMP_VELOCITY
+			if g_mem.player.pos.y == 0 {
+				g_mem.player.jumping = true
+				g_mem.player.velocity = JUMP_VELOCITY
 			}
 		}
 
 		if input_is_burrowing() {
-			if g_mem.player_pos.y == 0 {
-				g_mem.player_burrowing = true
-				g_mem.player_velocity = BURROW_VELOCITY
+			if g_mem.player.pos.y == 0 {
+				g_mem.player.burrowing = true
+				g_mem.player.velocity = BURROW_VELOCITY
 			}
 		}
 	}
 
-	if g_mem.player_jumping {
-		if !input_is_jumping() && !g_mem.release_decay_applied && g_mem.player_velocity < 0 {
-			g_mem.player_velocity *= RELEASE_DECAY
+	if g_mem.player.jumping {
+		if !input_is_jumping() && !g_mem.release_decay_applied && g_mem.player.velocity < 0 {
+			g_mem.player.velocity *= RELEASE_DECAY
 			g_mem.release_decay_applied = true
 		}
-		// if g_mem.player_velocity > 0 && input_is_burrowing() {
-		// 	g_mem.player_velocity += ACCELERATION * dt
-		// }
 
-		g_mem.player_pos.y += g_mem.player_velocity * dt
-		if g_mem.player_velocity > 0 {
-			g_mem.player_velocity += GRAVITY * FALL_MULTIPLIER * dt
+		g_mem.player.pos.y += g_mem.player.velocity * dt
+		if g_mem.player.velocity > 0 {
+			g_mem.player.velocity += GRAVITY * FALL_MULTIPLIER * dt
 		} else {
-			g_mem.player_velocity += GRAVITY * dt
+			g_mem.player.velocity += GRAVITY * dt
 		}
-		if g_mem.player_pos.y >= 0 {
-			g_mem.player_jumping = false
+		if g_mem.player.pos.y >= 0 {
+			g_mem.player.jumping = false
 			if input_is_burrowing() {
 				g_mem.chain_multiplier = min(
 					g_mem.chain_multiplier + CHAIN_MULTIPLIER_INCREMENT,
 					CHAIN_MULTIPLIER_MAX,
 				)
-				g_mem.player_burrowing = true
-				fmt.println("DEBUG: previous velocity", g_mem.player_velocity)
-				g_mem.player_velocity = BURROW_VELOCITY * g_mem.chain_multiplier
-				fmt.println("DEBUG: new velocity", g_mem.player_velocity)
+				g_mem.player.burrowing = true
+				fmt.println("DEBUG: previous velocity", g_mem.player.velocity)
+				g_mem.player.velocity = BURROW_VELOCITY * g_mem.chain_multiplier
+				fmt.println("DEBUG: new velocity", g_mem.player.velocity)
 			} else {
-				g_mem.player_pos.y = 0
+				g_mem.player.pos.y = 0
 				g_mem.chain_multiplier = 1.0
 			}
 		}
 	}
 
-	if g_mem.player_burrowing {
-		if !input_is_burrowing() && !g_mem.release_decay_applied && g_mem.player_velocity > 0 {
-			g_mem.player_velocity *= RELEASE_DECAY
+	if g_mem.player.burrowing {
+		if !input_is_burrowing() && !g_mem.release_decay_applied && g_mem.player.velocity > 0 {
+			g_mem.player.velocity *= RELEASE_DECAY
 			g_mem.release_decay_applied = true
 		}
-		// if g_mem.player_velocity < 0 && input_is_jumping() {
-		// 	g_mem.player_velocity -= ACCELERATION * dt
-		// }
 
 		if input_is_jumping() {
-			g_mem.player_velocity -= ACCELERATION * dt
+			g_mem.player.velocity -= ACCELERATION * dt
 		}
 
-		g_mem.player_pos.y += g_mem.player_velocity * dt
-		g_mem.player_velocity -= BURROW_GRAVITY * dt
-		if g_mem.player_pos.y <= 0 {
-			g_mem.player_burrowing = false
+		g_mem.player.pos.y += g_mem.player.velocity * dt
+		g_mem.player.velocity -= BURROW_GRAVITY * dt
+		if g_mem.player.pos.y <= 0 {
+			g_mem.player.burrowing = false
 			if input_is_jumping() {
 				g_mem.chain_multiplier = min(
 					g_mem.chain_multiplier + CHAIN_MULTIPLIER_INCREMENT,
 					CHAIN_MULTIPLIER_MAX,
 				)
-				g_mem.player_jumping = true
-				g_mem.player_velocity = JUMP_VELOCITY * g_mem.chain_multiplier
+				g_mem.player.jumping = true
+				g_mem.player.velocity = JUMP_VELOCITY * g_mem.chain_multiplier
 			} else {
-				g_mem.player_pos.y = 0
+				g_mem.player.pos.y = 0
 				g_mem.chain_multiplier = 1.0
 			}
 		}
 	}
 
-	if g_mem.player_pos.y == 0 {
+	if g_mem.player.pos.y == 0 {
 		g_mem.release_decay_applied = false
 	}
+}
 
-	g_mem.segment_distance += g_mem.player_speed * dt
+update_player_segments :: proc(dt: f32) {
+	for &pos in g_mem.previous_player {
+		pos.x -= g_mem.player.speed * dt
+	}
+
+	g_mem.segment_distance += g_mem.player.speed * dt
 	if g_mem.segment_distance >= PLAYER_SEGMENT_DISTANCE {
 		g_mem.segment_distance -= PLAYER_SEGMENT_DISTANCE
 
-		g_mem.previous_player_y_head =
-			(g_mem.previous_player_y_head + 1) % len(g_mem.previous_player_y)
-		g_mem.previous_player_y[g_mem.previous_player_y_head] = g_mem.player_pos.y
-	}
+		previous_head := g_mem.previous_player[g_mem.previous_player_head]
 
-	for &pos, bg in g_mem.above_background_positions {
+		g_mem.previous_player_head = (g_mem.previous_player_head + 1) % len(g_mem.previous_player)
+		g_mem.previous_player[g_mem.previous_player_head] = (previous_head + g_mem.player.pos) / 2
+
+		g_mem.previous_player_head = (g_mem.previous_player_head + 1) % len(g_mem.previous_player)
+		g_mem.previous_player[g_mem.previous_player_head] = g_mem.player.pos
+	}
+}
+
+update_backgrounds :: proc(dt: f32) {
+	for &pos, bg in g_mem.backgrounds.above_background_positions {
 		switch bg {
 		case .Sky:
 		// pos.x -= 0.02
 		case .DistantMountains:
-			pos.x -= 0.07 * g_mem.player_speed * dt
-			pos.y = -(g_mem.player_pos.y / 60)
+			pos.x -= 0.07 * g_mem.player.speed * dt
+			pos.y = -(g_mem.player.pos.y / 60)
 		case .CloserMountains:
-			pos.x -= 0.1 * g_mem.player_speed * dt
-			pos.y = -(g_mem.player_pos.y / 30)
+			pos.x -= 0.1 * g_mem.player.speed * dt
+			pos.y = -(g_mem.player.pos.y / 30)
 		case .Hills:
-			pos.x -= 0.3 * g_mem.player_speed * dt
-			pos.y = -(g_mem.player_pos.y / 10)
+			pos.x -= 0.3 * g_mem.player.speed * dt
+			pos.y = -(g_mem.player.pos.y / 10) + 15
 		}
 		if pos.x < -320 {
 			pos.x += 320
 		}
 	}
 
-	g_mem.underground_position.x -= g_mem.player_speed * dt
-	g_mem.underground_position.y = -(g_mem.player_pos.y / 10) + 10
-	if g_mem.underground_position.x < -320 {
-		g_mem.underground_position.x += 320
+	g_mem.backgrounds.underground_position.x -= g_mem.player.speed * dt
+	// g_mem.backgrounds.underground_position.y = -(g_mem.player.pos.y / 10) + 10
+	if g_mem.backgrounds.underground_position.x < -320 {
+		g_mem.backgrounds.underground_position.x += 320
 	}
+}
+
+update_obstacles :: proc(dt: f32) {
+	for &obstacle in g_mem.obstacles {
+		if obstacle.is_active {
+			obstacle.pos.x -= g_mem.player.speed * dt
+			if obstacle.pos.x < -320 {
+				obstacle.is_active = false
+			}
+		}
+	}
+
+	// given a random chance, spawn an obstacle
+	if rl.GetRandomValue(0, i32(100 * dt)) < 1 {
+		// fmt.println("DEBUG: Spawning obstacle")
+		type := ObstacleType(rl.GetRandomValue(0, len(ObstacleType) - 1))
+		pos := rl.Vector2{320, 0}
+		size := rl.Vector2{32, 32}
+		switch type {
+		case .Crate:
+			pos.y = -6
+			size = rl.Vector2{16, 16}
+		case .Rock:
+			pos.y = f32(rl.GetRandomValue(10, 100))
+		}
+		for &obstacle in g_mem.obstacles {
+			if !obstacle.is_active {
+				obstacle.is_active = true
+				obstacle.type = type
+				obstacle.pos = pos
+				obstacle.size = size
+				break
+			}
+		}
+	}
+}
+
+update :: proc() {
+	dt := rl.GetFrameTime() * 100
+
+	g_mem.distance_travelled += f64(g_mem.player.speed * dt)
+
+	update_player(dt)
+	update_player_segments(dt)
+	update_backgrounds(dt)
+	update_obstacles(dt)
 }
 
 draw_backgrounds :: proc() {
 	for rect, bg in ABOVE_BACKGROUND_SPRITE_RECTS {
 		for i in -1 ..= 2 {
 			rl.DrawTextureRec(
-				g_mem.above_background_texture,
+				g_mem.textures.above_background,
 				rect,
-				g_mem.above_background_positions[bg] + {rect.width * f32(i), -310},
+				g_mem.backgrounds.above_background_positions[bg] + {rect.width * f32(i), -310},
 				rl.WHITE,
 			)
 		}
@@ -243,8 +320,11 @@ draw_backgrounds :: proc() {
 
 	for i in -1 ..= 2 {
 		rl.DrawTextureV(
-			g_mem.underground_texture,
-			{g_mem.underground_position.x + 320 * f32(i), g_mem.underground_position.y},
+			g_mem.textures.underground,
+			{
+				g_mem.backgrounds.underground_position.x + 320 * f32(i),
+				g_mem.backgrounds.underground_position.y,
+			},
 			rl.WHITE,
 		)
 	}
@@ -253,9 +333,14 @@ draw_backgrounds :: proc() {
 render_player :: proc() {
 	draw_player_segment :: proc(pos: rl.Vector2) {
 		rl.DrawTexturePro(
-			g_mem.player_texture,
+			g_mem.textures.player,
 			{0, 0, 100, 100},
-			{pos.x, pos.y, PLAYER_SEGMENT_SIZE, PLAYER_SEGMENT_SIZE},
+			{
+				(pos.x / PLAYER_RENDER_SCALE) - (PLAYER_SEGMENT_SIZE / 2),
+				pos.y / PLAYER_RENDER_SCALE,
+				PLAYER_SEGMENT_SIZE,
+				PLAYER_SEGMENT_SIZE,
+			},
 			{PLAYER_SEGMENT_SIZE / 2, PLAYER_SEGMENT_SIZE / 2},
 			0,
 			rl.WHITE,
@@ -274,7 +359,7 @@ render_player :: proc() {
 	}
 
 	get_x_pos :: proc(count: int) -> f32 {
-		return -f32(f32(count) * (g_mem.player_speed * 4)) - PLAYER_SEGMENT_SIZE / 2
+		return -f32(f32(count) * (g_mem.player.speed * 4)) - PLAYER_SEGMENT_SIZE / 2
 	}
 
 	scale_y_pos :: proc(orig_y_pos: f32) -> f32 {
@@ -282,7 +367,7 @@ render_player :: proc() {
 	}
 
 	// // Begin drawing to render texture
-	rl.BeginTextureMode(g_mem.player_render_texture)
+	rl.BeginTextureMode(g_mem.textures.player_render)
 	{
 		rl.ClearBackground(rl.BLANK)
 
@@ -297,8 +382,8 @@ render_player :: proc() {
 
 		camera := rl.Camera2D {
 			offset = {
-				f32(g_mem.player_render_texture.texture.width),
-				f32(g_mem.player_render_texture.texture.height) / 2,
+				f32(g_mem.textures.player_render.texture.width),
+				f32(g_mem.textures.player_render.texture.height) / 2,
 			},
 			zoom   = 1.0,
 		}
@@ -307,20 +392,18 @@ render_player :: proc() {
 		{
 			pos_count := 0
 
-			draw_player_segment({get_x_pos(pos_count), scale_y_pos(g_mem.player_pos.y)})
+			draw_player_segment(g_mem.player.pos)
 			pos_count += 1
 
-			for i := g_mem.previous_player_y_head; i >= 0; i -= 1 {
-				draw_player_segment(
-					{get_x_pos(pos_count), scale_y_pos(g_mem.previous_player_y[i])},
-				)
+			for i := g_mem.previous_player_head; i >= 0; i -= 1 {
+				pp := g_mem.previous_player[i]
+				draw_player_segment(pp)
 				pos_count += 1
 			}
 
-			for i := len(g_mem.previous_player_y) - 1; i > g_mem.previous_player_y_head; i -= 1 {
-				draw_player_segment(
-					{get_x_pos(pos_count), scale_y_pos(g_mem.previous_player_y[i])},
-				)
+			for i := len(g_mem.previous_player) - 1; i > g_mem.previous_player_head; i -= 1 {
+				pp := g_mem.previous_player[i]
+				draw_player_segment(pp)
 				pos_count += 1
 			}
 		}
@@ -332,13 +415,21 @@ render_player :: proc() {
 draw_player :: proc() {
 	// Set the shader texture uniform to use our render texture
 	rl.SetShaderValueTexture(
-		g_mem.player_shader,
-		rl.GetShaderLocation(g_mem.player_shader, "currentTexture"),
-		g_mem.player_render_texture.texture,
+		g_mem.shaders.player,
+		rl.GetShaderLocation(g_mem.shaders.player, "currentTexture"),
+		g_mem.textures.player_render.texture,
 	)
-
+	rl.SetShaderValue(
+		g_mem.shaders.player,
+		rl.GetShaderLocation(g_mem.shaders.player, "texelSize"),
+		&rl.Vector2 {
+			1.0 / f32(g_mem.textures.player_render.texture.width),
+			1.0 / f32(g_mem.textures.player_render.texture.height),
+		},
+		.VEC2,
+	)
 	// Now draw the combined texture with shader
-	rl.BeginShaderMode(g_mem.player_shader)
+	rl.BeginShaderMode(g_mem.shaders.player)
 	{
 		dest_rect: rl.Rectangle = {
 			0,
@@ -354,11 +445,11 @@ draw_player :: proc() {
 		src_rect: rl.Rectangle = {
 			0,
 			0,
-			f32(g_mem.player_render_texture.texture.width),
-			-f32(g_mem.player_render_texture.texture.height),
+			f32(g_mem.textures.player_render.texture.width),
+			-f32(g_mem.textures.player_render.texture.height),
 		}
 		rl.DrawTexturePro(
-			g_mem.player_render_texture.texture,
+			g_mem.textures.player_render.texture,
 			src_rect,
 			dest_rect,
 			origin,
@@ -368,7 +459,27 @@ draw_player :: proc() {
 	}
 	rl.EndShaderMode()
 
-	rl.DrawRectangleV(g_mem.player_pos, {10, 10}, rl.PURPLE)
+	// rl.DrawRectangleV(g_mem.player.pos, {10, 10}, rl.PURPLE)
+}
+
+draw_obstacles :: proc() {
+	for &obstacle in g_mem.obstacles {
+		if obstacle.is_active {
+			pos := obstacle.pos
+			// pos.y += -(g_mem.player.pos.y / 10)
+			rl.DrawTexturePro(
+				g_mem.textures.obstacles,
+				OBSTACLE_SPRITE_RECTS[obstacle.type],
+				{pos.x, pos.y, obstacle.size.x, obstacle.size.y},
+				{0, 0},
+				0,
+				rl.WHITE,
+			)
+
+			// debug rect
+			rl.DrawRectangleLinesEx({pos.x, pos.y, obstacle.size.x, obstacle.size.y}, 1, rl.RED)
+		}
+	}
 }
 
 draw :: proc() {
@@ -381,13 +492,7 @@ draw :: proc() {
 		rl.BeginMode2D(game_camera())
 		{
 			draw_backgrounds()
-
-			// rl.DrawLineEx({-150, 12.5}, {150, 12.5}, 5, rl.BROWN)
-			// rl.DrawRectangleV({-150, 15}, {300, 80}, rl.DARKBROWN)
-
-			// rl.DrawRectangleV({20, 20}, {10, 10}, rl.RED)
-			// rl.DrawRectangleV({-30, -20}, {10, 10}, rl.GREEN)
-
+			draw_obstacles()
 			draw_player()
 		}
 		rl.EndMode2D()
@@ -396,10 +501,10 @@ draw :: proc() {
 		{
 			// Note: main_hot_reload.odin clears the temp allocator at end of frame.
 			stats := fmt.ctprintf(
-				"player_speed: %v\nplayer_pos: %v\nplayer_velocity: %v\nchain_multiplier: %v\ndistance_travelled: %v",
-				g_mem.player_speed,
-				g_mem.player_pos,
-				g_mem.player_velocity,
+				"player.speed: %v\nplayer.pos: %v\nplayer.velocity: %v\nchain_multiplier: %v\ndistance_travelled: %v",
+				g_mem.player.speed,
+				g_mem.player.pos,
+				g_mem.player.velocity,
 				g_mem.chain_multiplier,
 				g_mem.distance_travelled,
 			)
@@ -430,29 +535,39 @@ game_init :: proc() {
 	g_mem = new(Game_Memory)
 
 	g_mem^ = Game_Memory {
-		player_speed             = 1.0,
-		above_background_texture = rl.LoadTexture("assets/above-background-sky.png"),
-		underground_texture      = rl.LoadTexture("assets/underground.png"),
-		// previous_player_y_snapshmot_time = rl.GetTime(),
-		player_shader            = rl.LoadShader(nil, "assets/player.fs"),
-		player_texture           = rl.LoadTexture("assets/radial_gradient.png"),
-		player_render_texture    = rl.LoadRenderTexture(
-			PLAYER_RENDER_TEXTURE_SIZE,
-			PLAYER_RENDER_TEXTURE_SIZE,
-		),
-		chain_multiplier         = 1.0,
+		player = {speed = 1.0, pos = {-120, 0}},
+		textures = {
+			above_background = rl.LoadTexture("assets/above-background-sky.png"),
+			underground = rl.LoadTexture("assets/underground.png"),
+			player = rl.LoadTexture("assets/radial_gradient.png"),
+			player_render = rl.LoadRenderTexture(
+				PLAYER_RENDER_TEXTURE_SIZE,
+				PLAYER_RENDER_TEXTURE_SIZE,
+			),
+			obstacles = rl.LoadTexture("assets/obstacles.png"),
+		},
+		shaders = {player = rl.LoadShader(nil, "assets/player.fs")},
+		chain_multiplier = 1.0,
+		previous_player = make([]rl.Vector2, 256),
+		obstacles = make([]Obstacle, 32),
 	}
+
+	rl.SetTextureWrap(g_mem.textures.player_render.texture, .CLAMP)
+	rl.SetTextureFilter(g_mem.textures.player_render.texture, .TRILINEAR)
 
 	game_hot_reloaded(g_mem)
 }
 
 @(export)
 game_shutdown :: proc() {
-	rl.UnloadRenderTexture(g_mem.player_render_texture)
-	rl.UnloadTexture(g_mem.above_background_texture)
-	rl.UnloadTexture(g_mem.underground_texture)
-	rl.UnloadTexture(g_mem.player_texture)
-	rl.UnloadShader(g_mem.player_shader)
+	rl.UnloadRenderTexture(g_mem.textures.player_render)
+	rl.UnloadTexture(g_mem.textures.above_background)
+	rl.UnloadTexture(g_mem.textures.underground)
+	rl.UnloadTexture(g_mem.textures.player)
+	rl.UnloadTexture(g_mem.textures.obstacles)
+	rl.UnloadShader(g_mem.shaders.player)
+	delete(g_mem.previous_player)
+	delete(g_mem.obstacles)
 	free(g_mem)
 }
 

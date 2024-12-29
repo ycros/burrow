@@ -2,31 +2,73 @@
 
 in vec2 fragTexCoord;
 uniform sampler2D currentTexture;
+uniform vec2 texelSize;
 out vec4 FragColor;
+
+float getMinTransparentDistance() {
+    float minDist = 100.0;
+    float searchRadius = 10.0;
+
+    // Get center pixel alpha
+    vec4 centerColor = texture(currentTexture, fragTexCoord);
+
+    // Early exit if we're in fully transparent area
+    if(centerColor.a < 0.1) {
+        return 0.0;
+    }
+
+    // If we're in fully opaque area, search for nearest transparent pixel
+    for(float y = -searchRadius; y <= searchRadius; y += 1.0) {
+        for(float x = -searchRadius; x <= searchRadius; x += 1.0) {
+            vec2 offset = vec2(x, y) * texelSize;
+            vec2 sampleCoord = fragTexCoord + offset;
+            vec4 sampleColor = texture(currentTexture, sampleCoord);
+
+            if(sampleColor.a < 0.1) {
+                float dist = sqrt(x*x + y*y); // Use actual pixel distance
+                minDist = min(minDist, dist);
+            }
+        }
+    }
+
+    return minDist == 100.0 ? searchRadius : minDist;
+}
 
 void main()
 {
-    // Sample texture
-    vec4 texColor = texture(currentTexture, fragTexCoord);
+    // Gaussian kernel weights for 3x3
+    float kernel[9] = float[](
+        0.0625, 0.125, 0.0625,
+        0.125,  0.25,  0.125,
+        0.0625, 0.125, 0.0625
+    );
 
-    // Calculate intensity (using red channel since it's a white gradient)
-    float intensity = texColor.r;
+    vec2 offsets[9] = vec2[](
+        vec2(-1, -1), vec2(0, -1), vec2(1, -1),
+        vec2(-1,  0), vec2(0,  0), vec2(1,  0),
+        vec2(-1,  1), vec2(0,  1), vec2(1,  1)
+    );
 
-    // Define thresholds
-    float mainThreshold = 0.05;    // Adjust this for main shape size
-    float borderThreshold = 0.01;  // Adjust this for border size
+    float blurredIntensity = 0.0;
+    for(int i = 0; i < 9; i++) {
+        vec2 sampleCoord = fragTexCoord + offsets[i] * texelSize;
+        blurredIntensity += texture(currentTexture, sampleCoord).r * kernel[i];
+    }
 
-    // Set colors based on thresholds
-    if (intensity > mainThreshold) {
-        // Main shape - white
-        FragColor = vec4(1.0, 1.0, 1.0, 1.0);
-    }
-    else if (intensity > borderThreshold) {
-        // Border - dark gray
-        FragColor = vec4(0.3, 0.3, 0.3, 1.0);
-    }
-    else {
-        // Everything else - transparent
-        FragColor = vec4(0.0, 0.0, 0.0, 0.0);
-    }
+    float mainThreshold = 0.05;
+    float smoothWidth = 0.02;
+    float alpha = smoothstep(mainThreshold - smoothWidth, mainThreshold + smoothWidth, blurredIntensity);
+
+    // Adjusted color tinting
+    vec3 innerColor = vec3(0.1, 0.2, 0.05);  // Darker inner color
+    vec3 outerColor = vec3(0.5, 0.6, 0.2);   // Brighter outer color
+
+    float dist = getMinTransparentDistance();
+    // Wider gradient range - adjust these values to control gradient width
+    float minDist = 0.0;
+    float maxDist = 10.0;
+    float normalizedDist = clamp((dist - minDist) / (maxDist - minDist), 0.0, 1.0);
+
+    vec3 finalColor = mix(innerColor, outerColor, normalizedDist);
+    FragColor = vec4(finalColor, alpha);
 }
