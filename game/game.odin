@@ -21,7 +21,7 @@ import "core:fmt"
 import rl "vendor:raylib"
 
 when ODIN_DEBUG {
-	DEBUG_PLAYER_INVINCIBLE :: true
+	DEBUG_PLAYER_INVINCIBLE :: false
 } else {
 	DEBUG_PLAYER_INVINCIBLE :: false
 }
@@ -313,6 +313,10 @@ update_entities :: proc(dt: f32) {
 					entity.animation_progress = 0
 				}
 			} else {
+				if entity.type == .Apple && g_mem.lives == MAX_LIVES {
+					entity.type = .Coin
+				}
+
 				radius: f32 = 5 if entity.type == .Crate || entity.type == .Rock else 10
 				if rl.CheckCollisionCircleRec(
 					g_mem.player.pos,
@@ -342,17 +346,16 @@ update_entities :: proc(dt: f32) {
 	// given a random chance, spawn an entity
 	max_random := max(i32(200 * dt / g_mem.player.speed), 2)
 	if rl.GetRandomValue(0, max_random) < 1 {
-		fmt.println("DEBUG: max_random", max_random)
+		// fmt.println("DEBUG: max_random", max_random)
 		// fmt.println("DEBUG: Spawning entity")
 		type_random := rl.GetRandomValue(0, 100)
 		type := EntityType.Crate
 
-		// Calculate apple spawn chance based on lives
 		apple_chance: i32 = 8
-		if g_mem.lives < MAX_LIVES {
-			// Linear interpolation between 20% (1 life) and 8% (MAX_LIVES)
-			apple_chance = i32(20 - int((f32(g_mem.lives) / f32(MAX_LIVES)) * 12))
-		}
+		// if g_mem.lives < MAX_LIVES {
+		// 	// Linear interpolation between 20% (1 life) and 8% (MAX_LIVES)
+		// 	apple_chance = i32(20 - int((f32(g_mem.lives) / f32(MAX_LIVES)) * 12))
+		// }
 
 		// fmt.println("DEBUG: Apple chance", apple_chance)
 
@@ -655,7 +658,7 @@ draw_ui_intro :: proc(ui_size: rl.Vector2) {
 	small_text_size :: 15
 
 	center_x := ui_size.x / 2
-	title_y := ui_size.y / 7
+	title_y := 20
 
 	// Title
 	title_text :: "BURROW"
@@ -679,7 +682,7 @@ draw_ui_intro :: proc(ui_size: rl.Vector2) {
 	rl.DrawText(
 		jump_text,
 		i32(center_x - jump_width / 2),
-		i32(controls_y + 30),
+		i32(controls_y + 20),
 		text_size,
 		rl.GRAY,
 	)
@@ -689,7 +692,27 @@ draw_ui_intro :: proc(ui_size: rl.Vector2) {
 	rl.DrawText(
 		burrow_text,
 		i32(center_x - burrow_width / 2),
-		i32(controls_y + 60),
+		i32(controls_y + 40),
+		text_size,
+		rl.GRAY,
+	)
+
+	momentum_text :: "build momentum by chaining jumps and burrows"
+	momentum_width := f32(rl.MeasureText(momentum_text, text_size))
+	rl.DrawText(
+		momentum_text,
+		i32(center_x - momentum_width / 2),
+		i32(controls_y + 80),
+		text_size,
+		rl.GRAY,
+	)
+
+	control_text :: "more control under ground than in the air"
+	control_width := f32(rl.MeasureText(control_text, text_size))
+	rl.DrawText(
+		control_text,
+		i32(center_x - control_width / 2),
+		i32(controls_y + 100),
 		text_size,
 		rl.GRAY,
 	)
