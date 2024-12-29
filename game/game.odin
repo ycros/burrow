@@ -330,7 +330,7 @@ update_entities :: proc(dt: f32) {
 							if !DEBUG_PLAYER_INVINCIBLE {
 								g_mem.lives -= 1
 							}
-							g_mem.score = max(g_mem.score - 50, 0)
+							g_mem.score = max(g_mem.score - 25, 0)
 							g_mem.last_hit_time = rl.GetTime()
 						}
 					} else if entity.type == .Coin {
