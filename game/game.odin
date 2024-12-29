@@ -129,14 +129,14 @@ update_player :: proc(dt: f32) {
 		return rl.IsKeyDown(.J) || rl.IsKeyDown(.S) || rl.IsGamepadButtonDown(0, .RIGHT_FACE_DOWN)
 	}
 
-	// [DEBUG]
-	if rl.IsGamepadButtonDown(0, .LEFT_FACE_RIGHT) {
-		g_mem.player.speed += 0.01
-	}
-	if rl.IsGamepadButtonDown(0, .LEFT_FACE_LEFT) {
-		g_mem.player.speed -= 0.01
-	}
-	// [DEBUG]
+	// // [DEBUG]
+	// if rl.IsGamepadButtonDown(0, .LEFT_FACE_RIGHT) {
+	// 	g_mem.player.speed += 0.01
+	// }
+	// if rl.IsGamepadButtonDown(0, .LEFT_FACE_LEFT) {
+	// 	g_mem.player.speed -= 0.01
+	// }
+	// // [DEBUG]
 
 	GRAVITY :: 0.2
 	BURROW_GRAVITY :: 0.1
@@ -186,9 +186,9 @@ update_player :: proc(dt: f32) {
 					CHAIN_MULTIPLIER_MAX,
 				)
 				g_mem.player.burrowing = true
-				fmt.println("DEBUG: previous velocity", g_mem.player.velocity)
+				// fmt.println("DEBUG: previous velocity", g_mem.player.velocity)
 				g_mem.player.velocity = BURROW_VELOCITY * g_mem.chain_multiplier
-				fmt.println("DEBUG: new velocity", g_mem.player.velocity)
+				// fmt.println("DEBUG: new velocity", g_mem.player.velocity)
 			} else {
 				g_mem.player.pos.y = 0
 				g_mem.chain_multiplier = 1.0
@@ -319,7 +319,7 @@ update_entities :: proc(dt: f32) {
 			apple_chance = i32(20 - int((f32(g_mem.lives) / f32(MAX_LIVES)) * 12))
 		}
 
-		fmt.println("DEBUG: Apple chance", apple_chance)
+		// fmt.println("DEBUG: Apple chance", apple_chance)
 
 		if type_random < apple_chance && g_mem.lives < MAX_LIVES {
 			type = EntityType.Apple
@@ -376,14 +376,14 @@ update :: proc() {
 
 	if g_mem.screen_state == .GameOver {
 		if input_start_pressed() {
-			fmt.println("DEBUG: GameOver -> Intro")
+			// fmt.println("DEBUG: GameOver -> Intro")
 			g_mem.screen_state = .Intro
 		}
 		return
 	}
 	if g_mem.screen_state == .Intro {
 		if input_start_pressed() {
-			fmt.println("DEBUG: Intro -> Game")
+			// fmt.println("DEBUG: Intro -> Game")
 			game_state_reset()
 			g_mem.screen_state = .Game
 		}
